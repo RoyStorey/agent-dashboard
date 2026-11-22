@@ -158,7 +158,7 @@ export function App() {
             aria-pressed={kill}
             title="Instantly deny every agent request"
           >
-            {kill ? "Kill switch ON — click to resume" : "Kill switch"}
+            {kill ? "Resume agents" : "Kill switch"}
           </button>
         </header>
 

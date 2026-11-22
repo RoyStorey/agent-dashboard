@@ -47,6 +47,10 @@ const FUNDING_TYPES: readonly FundingType[] = ["deposit", "withdrawal", "revenue
 const LEVELS: readonly ActivityLevel[] = ["info", "warning", "error", "success"];
 const MAX_ACTIVITY_RETURNED = 300;
 
+function actionLabel(agent: Agent | undefined, key: string): string {
+  return agent?.actions.find((a) => a.key === key)?.label ?? key;
+}
+
 function hostnameOf(hostHeader: string): string {
   // Handles "localhost:4317", "127.0.0.1:4317" and "[::1]:4317".
   if (hostHeader.startsWith("[")) return hostHeader.slice(0, hostHeader.indexOf("]") + 1);
@@ -195,7 +199,7 @@ export function createApp(opts: AppOptions): express.Express {
       };
       s.requests.push(r);
       const money = amountCents > 0 ? ` for ${formatCents(amountCents)}` : "";
-      const label = agent.actions.find((a) => a.key === action)?.label ?? action;
+      const label = actionLabel(agent, action);
       if (ev.decision === "approved") log(s, agent.name, "info", `Approved: ${label}${money}.`, t);
       else if (ev.decision === "pending_approval")
         log(s, agent.name, "warning", `Needs your approval: ${label}${money}. ${ev.reasons.join(" ")}`, t);
@@ -235,7 +239,7 @@ export function createApp(opts: AppOptions): express.Express {
       request.closedAt = t.toISOString();
       request.resultNote = note;
       const money = finalAmount > 0 ? ` (${formatCents(finalAmount)})` : "";
-      log(s, agent.name, "success", `Completed: ${request.action}${money}. ${note}`.trim(), t);
+      log(s, agent.name, "success", `Completed: ${actionLabel(agent, request.action)}${money}. ${note}`.trim(), t);
       return request;
     });
     res.json({ request });
@@ -254,7 +258,7 @@ export function createApp(opts: AppOptions): express.Express {
       request.status = "cancelled";
       request.closedAt = t.toISOString();
       request.resultNote = note;
-      log(s, agent.name, "info", `Cancelled: ${request.action}. ${note}`.trim(), t);
+      log(s, agent.name, "info", `Cancelled: ${actionLabel(agent, request.action)}. ${note}`.trim(), t);
       return request;
     });
     res.json({ request });
@@ -699,7 +703,7 @@ export function createApp(opts: AppOptions): express.Express {
       r.decidedAt = t.toISOString();
       r.decidedBy = "owner";
       r.reasons = [...r.reasons, "Approved by owner."];
-      log(s, "Owner", "success", `Approved ${agent.name}: ${r.action}${r.amountCents > 0 ? ` for ${formatCents(r.amountCents)}` : ""}.`, t);
+      log(s, "Owner", "success", `Approved ${agent.name}: ${actionLabel(agent, r.action)}${r.amountCents > 0 ? ` for ${formatCents(r.amountCents)}` : ""}.`, t);
     });
     sendState(res);
   });
@@ -716,8 +720,8 @@ export function createApp(opts: AppOptions): express.Express {
       r.decidedBy = "owner";
       r.resultNote = note;
       r.reasons = [...r.reasons, `Rejected by owner.${note ? ` ${note}` : ""}`];
-      const name = s.agents.find((a) => a.id === r.agentId)?.name ?? "agent";
-      log(s, "Owner", "warning", `Rejected ${name}: ${r.action}.${note ? ` ${note}` : ""}`, t);
+      const agent = s.agents.find((a) => a.id === r.agentId);
+      log(s, "Owner", "warning", `Rejected ${agent?.name ?? "agent"}: ${actionLabel(agent, r.action)}.${note ? ` ${note}` : ""}`, t);
     });
     sendState(res);
   });
@@ -739,7 +743,8 @@ export function createApp(opts: AppOptions): express.Express {
       r.status = outcome as "completed" | "cancelled";
       r.closedAt = t.toISOString();
       r.resultNote = note;
-      log(s, "Owner", "info", `Marked request ${r.action} as ${outcome}.`, t);
+      const agent = s.agents.find((a) => a.id === r.agentId);
+      log(s, "Owner", "info", `Marked ${agent?.name ?? "agent"}: ${actionLabel(agent, r.action)} as ${outcome}.`, t);
     });
     sendState(res);
   });
