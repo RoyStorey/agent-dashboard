@@ -20,6 +20,8 @@ export interface ServiceDef {
   url: string;
   /** Exact steps, in order. */
   steps: string[];
+  /** Values to paste into the provider's form, shown with Copy buttons. */
+  copy?: Array<{ label: string; value: string }>;
   /** Exactly what to paste, e.g. "The key, starting with sk-ant-". */
   paste: string;
   placeholder: string;
@@ -105,20 +107,32 @@ export const SERVICES: ServiceDef[] = [
   },
   {
     key: "shopify_admin",
-    money: "spends",
+    // With the permissions below it can read orders and payouts and edit products, but cannot refund or move money.
+    money: "reads",
     label: "Shopify Admin API access",
     provider: "Shopify",
     category: "sales",
     secret: true,
     multiline: true,
-    url: "https://help.shopify.com/en/manual/apps/app-types/custom-apps",
+    url: "https://dev.shopify.com",
     steps: [
-      "In your Shopify admin open Settings → Apps and sales channels → Develop apps.",
-      "Create an app named “agent-dashboard” and grant it Admin API access to products, orders, inventory and customers.",
-      "Install the app and reveal the Admin API access token (shown once).",
+      "Open the Shopify Dev Dashboard → Apps → Create app.",
+      "App name: agent-dashboard. Leave Version name as it is.",
+      "App URL: leave https://example.com. Untick “Embed app in Shopify admin”. Leave the redirect box empty and “Use legacy install flow” unticked.",
+      "Scopes: click Copy below and paste the list into the Scopes box.",
+      "Leave Webhooks API version as it is and click Create app (top right).",
+      "On the app's page, install it on your store.",
+      "Open the app's settings and copy the Client ID and Client secret.",
     ],
-    paste: "Two lines: your store domain (name.myshopify.com), then the token (starts with shpat_)",
-    placeholder: "your-store.myshopify.com\nshpat_…",
+    copy: [
+      {
+        label: "Scopes",
+        value: "read_products,write_products,read_inventory,write_inventory,read_orders,read_customers,read_shopify_payments_payouts",
+      },
+    ],
+    paste:
+      "Three lines: your store address (name.myshopify.com), the Client ID, the Client secret. (If your screen shows an Admin API access token starting with shpat_ instead, paste that as the third line.)",
+    placeholder: "your-store.myshopify.com\nClient ID\nClient secret",
     time: "10 min",
   },
   {

@@ -61,6 +61,28 @@ export function VaultItem(props: { svc: ServiceDef; state: StateResponse; dash: 
           ))}
         </ol>
       )}
+      {showSteps &&
+        svc.copy?.map((c) => (
+          <div key={c.label} className="token-box mono" style={{ alignItems: "flex-start" }}>
+            <span style={{ flex: 1 }}>
+              <strong>{c.label}:</strong> {c.value}
+            </span>
+            <button
+              type="button"
+              className="btn btn-sm"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(c.value);
+                  dash.notify("success", `${c.label} copied. Paste it into Shopify.`);
+                } catch {
+                  dash.notify("error", "Couldn't copy automatically. Select the text and copy it.");
+                }
+              }}
+            >
+              Copy
+            </button>
+          </div>
+        ))}
 
       <form
         className="stack"
