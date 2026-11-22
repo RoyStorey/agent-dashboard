@@ -128,7 +128,8 @@ export const SERVICES: ServiceDef[] = [
     copy: [
       {
         label: "Scopes",
-        value: "read_products,write_products,read_inventory,write_inventory,read_orders,read_customers,read_shopify_payments_payouts",
+        value:
+          "read_products,write_products,read_inventory,write_inventory,read_orders,read_customers,read_shopify_payments_payouts,read_online_store_pages,write_online_store_pages",
       },
     ],
     paste:

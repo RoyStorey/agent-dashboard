@@ -126,6 +126,89 @@ export interface Agent {
   lastStatusMessage: string | null;
   /** Template action keys this agent has been offered, so upgrades add new ones once and never re-add ones you removed. */
   seenTemplateActions?: string[];
+  /** When the built-in runner checks this agent for new work. */
+  schedule: AgentSchedule;
+  /** Live status for the team board. */
+  runtime: AgentRuntime;
+}
+
+export interface AgentSchedule {
+  enabled: boolean;
+  /** How often to check for new work. A check that finds nothing new costs nothing. */
+  everyMinutes: number;
+}
+
+export interface AgentRuntime {
+  state: "working" | "idle";
+  /** What it is doing right now, e.g. "Creating product draft: …". */
+  step: string | null;
+  runId: string | null;
+  since: string | null;
+  lastRunAt: string | null;
+  lastCheckedAt: string | null;
+  /** Why the last check didn't start a run, e.g. "Nothing new since the last run". */
+  lastSkip: string | null;
+  nextCheckAt: string | null;
+}
+
+/* ---------- The team: phases, notebook, runs, store drafts ---------- */
+
+export type Phase = "research" | "sourcing" | "store" | "launch" | "operate";
+
+export interface TeamPlan {
+  phase: Phase;
+  /** The Orchestrator's current brief for the whole team. */
+  brief: string;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}
+
+/** One entry in the shared team notebook. */
+export interface NoteEntry {
+  id: string;
+  at: string;
+  author: string;
+  authorId: string | null;
+  /** Agent roles it is for, "all", or "owner". */
+  to: string[];
+  text: string;
+}
+
+export interface RunStep {
+  at: string;
+  text: string;
+}
+
+export interface AgentRun {
+  id: string;
+  agentId: string;
+  trigger: "schedule" | "manual";
+  /** Why it ran, e.g. "2 new notes for you". */
+  reason: string;
+  startedAt: string;
+  finishedAt: string | null;
+  status: "running" | "done" | "stopped" | "error";
+  steps: RunStep[];
+  summary: string;
+  costCents: Cents;
+  inputTokens: number;
+  outputTokens: number;
+  error: string | null;
+}
+
+/** Something the Storefront agent created in Shopify as a hidden draft, waiting for the owner. */
+export interface StoreDraft {
+  id: string;
+  agentId: string;
+  kind: "product" | "page";
+  title: string;
+  shopifyId: string;
+  priceCents: Cents | null;
+  preview: string;
+  status: "pending" | "published" | "rejected";
+  createdAt: string;
+  decidedAt: string | null;
+  note: string;
 }
 
 export interface GlobalGuardrails {
@@ -434,6 +517,10 @@ export interface DashboardState {
   shipments: Shipment[];
   supplies: SupplyItem[];
   shopify: ShopifySettings;
+  plan: TeamPlan;
+  notebook: NoteEntry[];
+  runs: AgentRun[];
+  drafts: StoreDraft[];
 }
 
 /** Connection to the owner's Shopify store (credentials live in the vault as "shopify_admin"). */
@@ -563,6 +650,12 @@ export interface StateResponse {
   shipments: Shipment[];
   supplies: SupplyItem[];
   shopify: ShopifySettings;
+  plan: TeamPlan;
+  /** Newest first. */
+  notebook: NoteEntry[];
+  /** Newest first, the last 100 runs. */
+  runs: AgentRun[];
+  drafts: StoreDraft[];
   guardrails: GlobalGuardrails;
   funding: FundingEntry[];
   requests: ActionRequest[];

@@ -196,7 +196,7 @@ export class ShopifyService {
     return data.access_token;
   }
 
-  private async graphql<T>(query: string): Promise<T> {
+  private async graphql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
     const c = this.credential();
     const token = await this.accessToken(c);
     let res;
@@ -204,7 +204,7 @@ export class ShopifyService {
       res = await this.fetchImpl(`https://${c.shop}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Shopify-Access-Token": token },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify(variables ? { query, variables } : { query }),
       });
     } catch (err) {
       throw new ShopifyError(`Couldn't reach ${c.shop}: ${err instanceof Error ? err.message : String(err)}`);
@@ -287,6 +287,107 @@ export class ShopifyService {
     } finally {
       this.syncing = false;
     }
+  }
+
+  /* ---------- Store drafts (Storefront agent) and sales (Finance agent) ---------- */
+
+  private static userErrors(e: Array<{ field?: string[] | null; message: string }> | undefined): void {
+    if (e && e.length > 0) throw new ShopifyError(`Shopify didn't accept it: ${e.map((x) => x.message).join("; ")}`);
+  }
+
+  /** The newest products, briefly, so the Storefront agent knows what already exists. */
+  async listProducts(): Promise<Array<{ id: string; title: string; status: string; price: string | null }>> {
+    const d = await this.graphql<{ products: { nodes: Array<{ id: string; title: string; status: string; variants: { nodes: Array<{ price: string }> } }> } }>(
+      `query { products(first: 20, sortKey: UPDATED_AT, reverse: true) { nodes { id title status variants(first: 1) { nodes { price } } } } }`,
+    );
+    return d.products.nodes.map((p) => ({ id: p.id, title: p.title, status: p.status, price: p.variants.nodes[0]?.price ?? null }));
+  }
+
+  /** Creates a hidden (DRAFT) product with one price. Customers can't see it until it's published. */
+  async createProductDraft(input: { title: string; descriptionHtml: string; productType: string; tags: string[]; priceCents: number }): Promise<string> {
+    const created = await this.graphql<{
+      productCreate: { product: { id: string; variants: { nodes: Array<{ id: string }> } } | null; userErrors: Array<{ field?: string[]; message: string }> };
+    }>(
+      `mutation CreateDraft($product: ProductCreateInput!) {
+        productCreate(product: $product) { product { id variants(first: 1) { nodes { id } } } userErrors { field message } }
+      }`,
+      { product: { title: input.title, descriptionHtml: input.descriptionHtml, productType: input.productType, tags: input.tags, status: "DRAFT" } },
+    );
+    ShopifyService.userErrors(created.productCreate.userErrors);
+    const product = created.productCreate.product;
+    if (!product) throw new ShopifyError("Shopify didn't return the new product.");
+    const variantId = product.variants.nodes[0]?.id;
+    if (variantId) {
+      const price = (input.priceCents / 100).toFixed(2);
+      const priced = await this.graphql<{ productVariantsBulkUpdate: { userErrors: Array<{ field?: string[]; message: string }> } }>(
+        `mutation SetPrice($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+          productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { field message } }
+        }`,
+        { productId: product.id, variants: [{ id: variantId, price }] },
+      );
+      ShopifyService.userErrors(priced.productVariantsBulkUpdate.userErrors);
+    }
+    return product.id;
+  }
+
+  async publishProduct(id: string): Promise<void> {
+    const d = await this.graphql<{ productUpdate: { userErrors: Array<{ field?: string[]; message: string }> } }>(
+      `mutation Publish($product: ProductUpdateInput!) { productUpdate(product: $product) { userErrors { field message } } }`,
+      { product: { id, status: "ACTIVE" } },
+    );
+    ShopifyService.userErrors(d.productUpdate.userErrors);
+  }
+
+  /** Creates an unpublished store page (About, FAQ, Shipping…). Needs the write_online_store_pages permission. */
+  async createPageDraft(input: { title: string; bodyHtml: string }): Promise<string> {
+    const d = await this.graphql<{ pageCreate: { page: { id: string } | null; userErrors: Array<{ field?: string[]; message: string }> } }>(
+      `mutation CreatePage($page: PageCreateInput!) { pageCreate(page: $page) { page { id } userErrors { field message } } }`,
+      { page: { title: input.title, body: input.bodyHtml, isPublished: false } },
+    );
+    ShopifyService.userErrors(d.pageCreate.userErrors);
+    if (!d.pageCreate.page) throw new ShopifyError("Shopify didn't return the new page.");
+    return d.pageCreate.page.id;
+  }
+
+  async publishPage(id: string): Promise<void> {
+    const d = await this.graphql<{ pageUpdate: { userErrors: Array<{ field?: string[]; message: string }> } }>(
+      `mutation PublishPage($id: ID!, $page: PageUpdateInput!) { pageUpdate(id: $id, page: $page) { userErrors { field message } } }`,
+      { id, page: { isPublished: true } },
+    );
+    ShopifyService.userErrors(d.pageUpdate.userErrors);
+  }
+
+  /** Sales over the last `days` days, totalled (no customer details), for the Finance agent. */
+  async salesSummary(days: number): Promise<{ days: number; orders: number; units: number; grossCents: number; refundedCents: number; currency: string }> {
+    const since = new Date(this.now().getTime() - days * 86_400_000).toISOString().slice(0, 10);
+    const d = await this.graphql<{
+      orders: {
+        nodes: Array<{
+          currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } };
+          totalRefundedSet: { shopMoney: { amount: string } };
+          lineItems: { nodes: Array<{ quantity: number }> };
+        }>;
+      };
+    }>(
+      `query Sales($q: String!) { orders(first: 250, query: $q) { nodes {
+        currentTotalPriceSet { shopMoney { amount currencyCode } }
+        totalRefundedSet { shopMoney { amount } }
+        lineItems(first: 50) { nodes { quantity } }
+      } } }`,
+      { q: `created_at:>=${since}` },
+    );
+    const toCents = (amount: string) => Math.round(Number(amount) * 100);
+    let grossCents = 0;
+    let refundedCents = 0;
+    let units = 0;
+    let currency = "USD";
+    for (const o of d.orders.nodes) {
+      grossCents += toCents(o.currentTotalPriceSet.shopMoney.amount);
+      refundedCents += toCents(o.totalRefundedSet.shopMoney.amount);
+      currency = o.currentTotalPriceSet.shopMoney.currencyCode;
+      for (const li of o.lineItems.nodes) units += li.quantity;
+    }
+    return { days, orders: d.orders.nodes.length, units, grossCents, refundedCents, currency };
   }
 
   /** Called on a timer: syncs only when shipping yourself, Shopify is saved, and auto-import is on. */

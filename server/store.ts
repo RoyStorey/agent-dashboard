@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { EMPTY_ECONOMICS } from "../shared/economics.ts";
 import { detectChannels, findChannel } from "../shared/channels.ts";
+import { defaultSchedule, idleRuntime } from "../shared/team.ts";
 import { AUTO_DONE, DEFAULT_TASKS, channelTaskText, findTemplate, makeDefaultTasks, syncChannelTasks } from "../shared/templates.ts";
 import type { ActionDef, ActivityEntry, ActivityLevel, Agent, DashboardState, DiscordSettings } from "../shared/types.ts";
 
@@ -64,6 +65,10 @@ export function defaultState(): DashboardState {
     shipments: [],
     supplies: [],
     shopify: { autoSync: true, shopName: null, connectedAt: null, lastSyncAt: null, lastSyncAdded: 0, lastError: null, lastErrorAt: null },
+    plan: { phase: "research", brief: "", updatedAt: null, updatedBy: null },
+    notebook: [],
+    runs: [],
+    drafts: [],
   };
 }
 
@@ -79,7 +84,7 @@ export function autoCompleteTasks(s: DashboardState, now: Date = new Date()): vo
 }
 
 /** Actions introduced after agents started remembering what they'd been offered. */
-const ACTIONS_ADDED_LATER = ["order_supplies"];
+const ACTIONS_ADDED_LATER = ["order_supplies", "advance_phase"];
 
 function newTemplateActions(a: Agent, tpl: NonNullable<ReturnType<typeof findTemplate>>): ActionDef[] {
   const seen = new Set(a.seenTemplateActions ?? tpl.actions.map((x) => x.key).filter((k) => !ACTIONS_ADDED_LATER.includes(k)));
@@ -119,6 +124,13 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
     shipments: Array.isArray(raw.shipments) ? raw.shipments : [],
     supplies: Array.isArray(raw.supplies) ? raw.supplies : [],
     shopify: { ...base.shopify, ...raw.shopify },
+    plan: { ...base.plan, ...raw.plan },
+    notebook: Array.isArray(raw.notebook) ? raw.notebook : [],
+    // A run can't survive a restart: mark any that were in progress as stopped.
+    runs: (Array.isArray(raw.runs) ? raw.runs : []).map((r) =>
+      r.status === "running" ? { ...r, status: "stopped" as const, finishedAt: r.finishedAt ?? r.startedAt, error: "Stopped because the dashboard restarted." } : r,
+    ),
+    drafts: Array.isArray(raw.drafts) ? raw.drafts : [],
     security: { ...base.security, ...raw.security },
     // A research job cannot survive a restart: mark any that were running as failed.
     research: (raw.research ?? []).map((j) =>
@@ -158,7 +170,13 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
     }
   }
   // Give saved agents the template's vault links, suggestions and P&L categories.
-  s.agents = s.agents.map((a) => {
+  s.agents = s.agents.map((a0) => {
+    // Every agent gets a schedule and an idle status (a restart ends any run in progress).
+    const a = {
+      ...a0,
+      schedule: a0.schedule ?? defaultSchedule(a0.role),
+      runtime: { ...idleRuntime(), ...a0.runtime, state: "idle" as const, step: null, runId: null, since: null },
+    };
     const tpl = findTemplate(a.role);
     if (!tpl) return a;
     return {
@@ -345,6 +363,8 @@ export class Store {
     autoCompleteTasks(draft);
     if (draft.activity.length > MAX_ACTIVITY) draft.activity = draft.activity.slice(-MAX_ACTIVITY);
     if (draft.aiUsage.length > MAX_AI_USAGE) draft.aiUsage = draft.aiUsage.slice(-MAX_AI_USAGE);
+    if (draft.notebook.length > 500) draft.notebook = draft.notebook.slice(-500);
+    if (draft.runs.length > 500) draft.runs = draft.runs.slice(-500);
     this.writeFile(draft);
     this.state = draft;
     const added = draft.activity.filter((a) => !before.has(a.id));

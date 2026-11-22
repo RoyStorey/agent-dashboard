@@ -1,3 +1,4 @@
+import { defaultSchedule, idleRuntime } from "../shared/team.ts";
 import { CUSTOM_ROLE, findTemplate } from "../shared/templates.ts";
 import type { Agent, AgentView, DashboardState } from "../shared/types.ts";
 import { resolveInputs } from "./inputs.ts";
@@ -29,6 +30,8 @@ export function createAgent(role: string, name: string | undefined, now: Date): 
     lastSeenAt: null,
     lastStatusMessage: null,
     seenTemplateActions: t ? t.actions.map((a) => a.key) : [],
+    schedule: defaultSchedule(t ? t.role : CUSTOM_ROLE),
+    runtime: idleRuntime(),
   };
   return base;
 }

@@ -46,6 +46,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     actions: [
       { key: "assign_task", label: "Assign a task to an agent", spends: false },
       { key: "send_owner_report", label: "Send owner report", spends: false },
+      { key: "advance_phase", label: "Move the team to the next phase", spends: false, approvalByDefault: true },
     ],
     defaults: { perTransactionLimitCents: 0, dailySpendLimitCents: 0, approvalThresholdCents: null },
     budgetWeight: 0,
