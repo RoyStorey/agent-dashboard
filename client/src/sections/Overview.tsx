@@ -1,4 +1,7 @@
+import { formatBps } from "../../../shared/economics.ts";
 import { formatCents } from "../../../shared/money.ts";
+import { computePnL } from "../../../shared/pnl.ts";
+import { setupSteps } from "./Setup.tsx";
 import type { SectionProps } from "../App.tsx";
 import { Badge, Card, EmptyState, Money, PageHeader, Stat, formatDateTime, timeAgo } from "../components/ui.tsx";
 import { ActionList } from "./Todo.tsx";
@@ -6,6 +9,8 @@ import { AgentStatusBadge } from "./Agents.tsx";
 
 export function Overview({ state, go }: SectionProps) {
   const f = state.finance;
+  const m = computePnL({ funding: state.funding, requests: state.requests, agents: state.agents, economics: state.economics, period: "this_month", now: new Date(state.serverTime) });
+  const setupLeft = setupSteps(state).filter((x) => !x.done && !x.optional).length;
   const blockers = state.ownerActions.filter((a) => a.severity === "blocker").length;
   const tasksDone = state.tasks.filter((t) => t.status === "done").length;
   const active = state.agents.filter((a) => a.status === "active").length;
@@ -21,16 +26,27 @@ export function Overview({ state, go }: SectionProps) {
         }
       />
 
+      {setupLeft > 0 && (
+        <div className="banner banner-info">
+          <span>
+            <strong>Setup: {setupLeft} step{setupLeft === 1 ? "" : "s"} left.</strong> The assistant walks you through each one.
+          </span>
+          <button className="btn btn-primary btn-sm" onClick={() => go("setup")}>
+            Continue setup
+          </button>
+        </div>
+      )}
+
       <div className="stats">
         <Stat label="Cash balance" value={<Money cents={f.cashBalanceCents} />} hint={<>Unallocated <Money cents={f.unallocatedCents} /></>} />
-        <Stat label="Spent this month" value={<Money cents={f.spentThisMonthCents} />} hint={<>Today <Money cents={f.spentTodayCents} /></>} />
-        <Stat label="Revenue (all time)" value={<Money cents={f.revenueCents} />} hint="Reported by agents or entered by you" />
+        <Stat label="Gross sales (this month)" value={<Money cents={m.grossSales} />} hint={`${m.unitsSold} units · net sales ${formatCents(m.netSales)}`} />
         <Stat
-          label="Profit (revenue − spend)"
-          value={<Money cents={f.profitCents} />}
-          tone={f.profitCents > 0 ? "good" : f.profitCents < 0 ? "bad" : undefined}
-          hint={`Total spent ${formatCents(f.spentCents)}`}
+          label="Net profit (this month)"
+          value={<Money cents={m.netProfit} />}
+          tone={m.netProfit > 0 ? "good" : m.netProfit < 0 ? "bad" : undefined}
+          hint={`Net margin ${formatBps(m.netMarginBps)} · gross margin ${formatBps(m.grossMarginBps)}`}
         />
+        <Stat label="Spent this month" value={<Money cents={f.spentThisMonthCents} />} hint={<>Today <Money cents={f.spentTodayCents} /></>} />
       </div>
 
       <div className="grid grid-2">

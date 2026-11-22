@@ -9,7 +9,11 @@ import { Approvals } from "./sections/Approvals.tsx";
 import { Business } from "./sections/Business.tsx";
 import { Funding } from "./sections/Funding.tsx";
 import { Guardrails } from "./sections/Guardrails.tsx";
+import { Credentials } from "./sections/Credentials.tsx";
+import { Financials } from "./sections/Financials.tsx";
+import { Integrations } from "./sections/Integrations.tsx";
 import { Overview } from "./sections/Overview.tsx";
+import { Setup, setupSteps } from "./sections/Setup.tsx";
 import { Todo } from "./sections/Todo.tsx";
 
 export interface SectionProps {
@@ -25,20 +29,24 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
+  { key: "setup", label: "Setup assistant", group: "Business" },
   { key: "overview", label: "Overview", group: "Business" },
   { key: "todo", label: "Things you need to do", group: "Business" },
-  { key: "business", label: "Business profile", group: "Business" },
+  { key: "business", label: "Business & product", group: "Business" },
+  { key: "financials", label: "Financials", group: "Business" },
   { key: "agents", label: "Agent team", group: "Agents" },
   { key: "approvals", label: "Approvals", group: "Agents" },
   { key: "activity", label: "Activity", group: "Agents" },
+  { key: "credentials", label: "Credentials", group: "Control" },
+  { key: "integrations", label: "Discord", group: "Control" },
   { key: "guardrails", label: "Guardrails", group: "Control" },
   { key: "funding", label: "Funding", group: "Control" },
 ];
 
-function readHash(): { section: SectionKey; agentId?: string } {
+function readHash(): { section: SectionKey | null; agentId?: string } {
   const [section, agentId] = window.location.hash.replace(/^#\/?/, "").split("/");
   const valid = NAV.some((n) => n.key === section);
-  return { section: valid ? (section as SectionKey) : "overview", agentId: agentId || undefined };
+  return { section: valid ? (section as SectionKey) : null, agentId: agentId || undefined };
 }
 
 export function App() {
@@ -76,12 +84,19 @@ export function App() {
     );
   }
 
+  const steps = setupSteps(state);
+  const setupLeft = steps.filter((x) => !x.done && !x.optional).length;
+  // With no section in the URL, start on the setup assistant until setup is finished.
+  const section: SectionKey = route.section ?? (setupLeft > 0 ? "setup" : "overview");
+
   const counts: Partial<Record<SectionKey, { n: number; alert: boolean }>> = {
     todo: {
       n: state.ownerActions.filter((a) => a.severity === "blocker").length + state.tasks.filter((t) => t.status === "todo").length,
       alert: state.ownerActions.some((a) => a.severity === "blocker"),
     },
     agents: { n: state.agents.length, alert: false },
+    setup: { n: setupLeft, alert: false },
+    credentials: { n: new Set(state.readiness.flatMap((r) => r.missingVaultKeys)).size, alert: false },
     approvals: {
       n: state.requests.filter((r) => r.status === "pending_approval").length,
       alert: state.requests.some((r) => r.status === "pending_approval"),
@@ -118,8 +133,8 @@ export function App() {
               return (
                 <button
                   key={n.key}
-                  className={`nav-btn ${route.section === n.key ? "active" : ""}`}
-                  aria-current={route.section === n.key ? "page" : undefined}
+                  className={`nav-btn ${section === n.key ? "active" : ""}`}
+                  aria-current={section === n.key ? "page" : undefined}
                   onClick={() => go(n.key)}
                 >
                   <span>{n.label}</span>
@@ -166,20 +181,24 @@ export function App() {
           {dash.loadError && (
             <div className="banner banner-bad">Lost connection to the server: {dash.loadError}. Retrying…</div>
           )}
-          {kill && route.section !== "guardrails" && (
+          {kill && section !== "guardrails" && (
             <div className="banner banner-bad">
               <strong>Kill switch is ON.</strong>
               <span>All agent requests are being denied.</span>
             </div>
           )}
-          {route.section === "overview" && <Overview {...props} />}
-          {route.section === "todo" && <Todo {...props} />}
-          {route.section === "business" && <Business {...props} />}
-          {route.section === "agents" && <Agents {...props} agentId={route.agentId} />}
-          {route.section === "approvals" && <Approvals {...props} />}
-          {route.section === "activity" && <Activity {...props} />}
-          {route.section === "guardrails" && <Guardrails {...props} />}
-          {route.section === "funding" && <Funding {...props} />}
+          {section === "setup" && <Setup {...props} />}
+          {section === "overview" && <Overview {...props} />}
+          {section === "todo" && <Todo {...props} />}
+          {section === "business" && <Business {...props} />}
+          {section === "financials" && <Financials {...props} />}
+          {section === "agents" && <Agents {...props} agentId={route.agentId} />}
+          {section === "approvals" && <Approvals {...props} />}
+          {section === "activity" && <Activity {...props} />}
+          {section === "credentials" && <Credentials {...props} />}
+          {section === "integrations" && <Integrations {...props} />}
+          {section === "guardrails" && <Guardrails {...props} />}
+          {section === "funding" && <Funding {...props} />}
         </main>
       </div>
       <Toasts toasts={dash.toasts} onDismiss={dash.dismissToast} />

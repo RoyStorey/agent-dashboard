@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { formatCents } from "../../../shared/money.ts";
-import type { ActionDef, AgentGuardrails, AgentView, InputField, InputKind } from "../../../shared/types.ts";
+import { findService } from "../../../shared/services.ts";
+import type { ActionDef, AgentGuardrails, AgentView, InputField, InputKind, InputSource } from "../../../shared/types.ts";
 import type { SectionProps } from "../App.tsx";
 import { api } from "../api.ts";
 import { Badge, Card, EmptyState, Field, Money, MoneyInput, ProgressBar, formatDateTime, timeAgo } from "../components/ui.tsx";
@@ -136,7 +137,7 @@ export function AgentDetail(props: Props) {
 
 /* ---------------- Inputs ---------------- */
 
-function InputsTab({ agent, dash }: Props) {
+function InputsTab({ agent, dash, go }: Props) {
   const [values, setValues] = useState<Record<string, string>>(agent.inputs);
   // Polling returns new objects every few seconds; only reset the form when the saved values really change.
   const savedKey = JSON.stringify(agent.inputs);
@@ -190,6 +191,8 @@ function InputsTab({ agent, dash }: Props) {
               field={f}
               value={values[f.key] ?? ""}
               secretSet={agent.secretsSet[f.key] ?? false}
+              source={agent.inputSources[f.key] ?? { type: "none" }}
+              onGoCredentials={() => go("credentials")}
               onChange={(v) => setValues({ ...values, [f.key]: v })}
               onClear={() => void dash.run(() => api.updateAgent(agent.id, { clearSecrets: [f.key] }), `${f.label} cleared.`)}
             />
@@ -205,13 +208,31 @@ function InputsTab({ agent, dash }: Props) {
   );
 }
 
-function InputControl(props: { field: InputField; value: string; secretSet: boolean; onChange: (v: string) => void; onClear: () => void }) {
-  const { field: f } = props;
+function InputControl(props: {
+  field: InputField;
+  value: string;
+  secretSet: boolean;
+  source: InputSource;
+  onGoCredentials: () => void;
+  onChange: (v: string) => void;
+  onClear: () => void;
+}) {
+  const { field: f, source } = props;
   const id = `in-${f.key}`;
-  const missing = f.required && (f.kind === "secret" ? !props.secretSet && props.value === "" : props.value.trim() === "");
+  const fromVault = source.type === "vault";
+  const missing = f.required && source.type === "none" && props.value.trim() === "";
+  const vaultLabel = fromVault ? (findService(source.key)?.label ?? source.key) : "";
   const help = (
     <>
-      {f.help}
+      {fromVault && <span className="source-tag">✓ From Credentials: {vaultLabel}. </span>}
+      {!fromVault && (f.vault?.length ?? 0) > 0 && source.type === "none" && (
+        <>
+          <button type="button" className="btn btn-sm" style={{ padding: "0 6px" }} onClick={props.onGoCredentials}>
+            Add it on Credentials
+          </button>{" "}
+        </>
+      )}
+      {f.help && !fromVault ? f.help : null}
       {missing && <span style={{ color: "var(--bad-strong)" }}> Required.</span>}
     </>
   );
@@ -226,7 +247,7 @@ function InputControl(props: { field: InputField; value: string; secretSet: bool
             type="password"
             autoComplete="off"
             value={props.value}
-            placeholder={props.secretSet ? "•••••••• saved — type to replace" : f.placeholder ?? "Paste secret"}
+            placeholder={props.secretSet ? "•••••••• saved for this agent. Type to replace." : fromVault ? "Using the saved credential. Type to override for this agent." : (f.placeholder ?? "Paste secret")}
             onChange={(e) => props.onChange(e.target.value)}
           />
           {props.secretSet && (
@@ -373,11 +394,16 @@ function ConnectTab({ agent, dash }: Props) {
     <div className="stack">
       <Card title="Model & runtime">
         <div className="form-grid">
-          <Field label="Provider" htmlFor="c-provider">
-            <input id="c-provider" value={conn.provider} onChange={(e) => setConn({ ...conn, provider: e.target.value })} placeholder="e.g. Anthropic" />
+          <Field label="Provider" htmlFor="c-provider" help="The agent's AI key comes from Credentials for this provider.">
+            <select id="c-provider" value={["Anthropic", "OpenAI", "Google"].includes(conn.provider) ? conn.provider : "Other"} onChange={(e) => setConn({ ...conn, provider: e.target.value === "Other" ? "" : e.target.value, model: e.target.value === "Anthropic" ? "claude-opus-5-5" : conn.provider === e.target.value ? conn.model : "" })}>
+              <option value="Anthropic">Anthropic (Claude)</option>
+              <option value="OpenAI">OpenAI</option>
+              <option value="Google">Google (Gemini)</option>
+              <option value="Other">Other (enter the key on Inputs)</option>
+            </select>
           </Field>
           <Field label="Model" htmlFor="c-model">
-            <input id="c-model" value={conn.model} onChange={(e) => setConn({ ...conn, model: e.target.value })} placeholder="e.g. claude-opus-5-5" />
+            <input id="c-model" value={conn.model} onChange={(e) => setConn({ ...conn, model: e.target.value })} placeholder={conn.provider === "Anthropic" ? "claude-opus-5-5" : "Model ID from your provider"} />
           </Field>
           <Field label="Where it runs" htmlFor="c-runtime" help="For your reference: a script on this computer, a server, a scheduled job…">
             <input id="c-runtime" value={conn.runtime} onChange={(e) => setConn({ ...conn, runtime: e.target.value })} />

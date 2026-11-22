@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { findService } from "../../../shared/services.ts";
 import { AGENT_TEMPLATES } from "../../../shared/templates.ts";
 import type { StateResponse } from "../../../shared/types.ts";
 import type { SectionProps } from "../App.tsx";
@@ -55,9 +56,16 @@ export function Agents(props: SectionProps & { agentId?: string }) {
         title="Agent team"
         subtitle="Each agent has one job. Connect any AI agent (Claude, another model, or your own script) by giving it its API token. The dashboard enforces your guardrails on every request it makes."
         actions={
-          <button className="btn btn-primary" onClick={() => setShowAdd((s) => !s)}>
-            {showAdd ? "Hide templates" : "Add agent"}
-          </button>
+          <>
+            {AGENT_TEMPLATES.some((t) => !roleCounts.has(t.role)) && (
+              <button className="btn btn-primary" onClick={() => void dash.run(() => api.addRecommendedTeam(), "Recommended team added.")}>
+                {state.agents.length === 0 ? `Add the recommended team (${AGENT_TEMPLATES.length})` : "Add missing recommended agents"}
+              </button>
+            )}
+            <button className="btn" onClick={() => setShowAdd((s) => !s)}>
+              {showAdd ? "Hide templates" : "Add one agent"}
+            </button>
+          </>
         }
       />
 
@@ -74,7 +82,8 @@ export function Agents(props: SectionProps & { agentId?: string }) {
                   </div>
                   <span className="muted">{t.description}</span>
                   <span className="help">
-                    Needs from you: {t.inputFields.filter((f) => f.required).map((f) => f.label).join(", ")}
+                    Uses:{" "}
+                    {[...new Set(t.inputFields.flatMap((f) => (f.vault ?? []).map((k) => (k === "llm" ? "your AI key" : (findService(k)?.provider ?? k)))))].join(", ")}
                   </span>
                 </button>
               );

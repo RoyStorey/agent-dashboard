@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { bpsToInput, parsePercent } from "../../../shared/economics.ts";
 import { centsToInput, formatCents, parseDollars } from "../../../shared/money.ts";
 import type { Toast } from "../api.ts";
 
@@ -159,4 +160,49 @@ export function ProgressBar(props: { value: number; max: number; label?: string 
       <div className={`progress-fill tone-bg-${tone}`} style={{ width: `${pct}%` }} />
     </div>
   );
+}
+
+/** Percentage input that edits basis points (15.5% = 1550). */
+export function PercentInput(props: { value: number; onChange: (bps: number) => void; id?: string; ariaLabel?: string }) {
+  const [text, setText] = useState(bpsToInput(props.value));
+  const [invalid, setInvalid] = useState(false);
+  useEffect(() => {
+    if (parsePercent(text) !== props.value) {
+      setText(bpsToInput(props.value));
+      setInvalid(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.value]);
+  return (
+    <div className={`money-input ${invalid ? "invalid" : ""}`}>
+      <input
+        id={props.id}
+        aria-label={props.ariaLabel}
+        inputMode="decimal"
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          const v = parsePercent(e.target.value);
+          setInvalid(v === null);
+          if (v !== null) props.onChange(v);
+        }}
+      />
+      <span className="prefix" style={{ paddingRight: 10 }}>
+        %
+      </span>
+    </div>
+  );
+}
+
+/** Opens in a new tab; the arrow makes it obvious it leaves the dashboard. */
+export function ExtLink(props: { href: string; children: ReactNode; className?: string }) {
+  return (
+    <a href={props.href} target="_blank" rel="noopener noreferrer" className={props.className}>
+      {props.children} ↗
+    </a>
+  );
+}
+
+export function StepState({ done }: { done: boolean }) {
+  return <span className={`step-dot ${done ? "done" : ""}`} aria-label={done ? "Done" : "To do"}>{done ? "✓" : ""}</span>;
 }

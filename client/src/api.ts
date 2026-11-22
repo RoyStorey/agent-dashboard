@@ -44,6 +44,23 @@ export const api = {
   reject: (id: string, note: string) => call<StateResponse>("POST", `/api/requests/${id}/reject`, { note }),
   closeRequest: (id: string, outcome: "completed" | "cancelled", actualAmountCents?: number) =>
     call<StateResponse>("POST", `/api/requests/${id}/close`, { outcome, actualAmountCents }),
+  recordSales: (r: { grossSalesCents: number; refundsCents: number; feesCents: number; unitsSold?: number; note: string }) =>
+    call<StateResponse>("POST", "/api/funding", { type: "revenue", ...r }),
+  updateEconomics: (e: Record<string, number>) => call<StateResponse>("PUT", "/api/economics", e),
+  saveVault: (key: string, value: string, label?: string) => call<StateResponse>("PUT", `/api/vault/${encodeURIComponent(key)}`, { value, label }),
+  deleteVault: (key: string) => call<StateResponse>("DELETE", `/api/vault/${encodeURIComponent(key)}`),
+  addRecommendedTeam: (roles?: string[]) => call<StateResponse>("POST", "/api/agents/recommended", roles ? { roles } : {}),
+  activateReady: () => call<StateResponse>("POST", "/api/agents/activate-ready"),
+  autofill: (overwrite: boolean) => call<StateResponse>("POST", "/api/agents/autofill", { overwrite }),
+  recommendedGuardrails: () => call<StateResponse>("POST", "/api/guardrails/recommended"),
+  updateAllocation: (a: Record<string, unknown>) => call<StateResponse>("PUT", "/api/allocation", a),
+  distribute: () => call<StateResponse>("POST", "/api/allocation/distribute"),
+  rebalance: () => call<StateResponse>("POST", "/api/allocation/rebalance"),
+  updateDiscord: (d: Record<string, unknown>) => call<StateResponse>("PUT", "/api/discord", d),
+  testDiscord: (target: string) => call<{ ok: boolean }>("POST", "/api/discord/test", { target }),
+  discordSummary: () => call<{ ok: boolean }>("POST", "/api/discord/summary"),
+  startResearch: (brief: Record<string, unknown>) => call<StateResponse>("POST", "/api/research", brief),
+  chooseIdea: (jobId: string, index: number) => call<StateResponse>("POST", `/api/research/${jobId}/choose`, { index }),
 };
 
 export interface Dashboard {

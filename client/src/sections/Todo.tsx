@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { OwnerAction, OwnerTask, SectionKey, TaskCategory } from "../../../shared/types.ts";
 import type { SectionProps } from "../App.tsx";
 import { api } from "../api.ts";
-import { Badge, Card, EmptyState, Field, PageHeader, ProgressBar } from "../components/ui.tsx";
+import { Badge, Card, EmptyState, ExtLink, Field, PageHeader, ProgressBar } from "../components/ui.tsx";
 
 const CATEGORY_LABEL: Record<TaskCategory, string> = {
   legal: "Legal & admin",
@@ -53,15 +53,34 @@ function TaskRow({ task, dash }: { task: OwnerTask; dash: SectionProps["dash"] }
         aria-label={`Mark "${task.title}" ${done ? "not done" : "done"}`}
         onChange={() => void dash.run(() => api.updateTask(task.id, { status: done ? "todo" : "done" }))}
       />
-      <div className="grow stack" style={{ gap: 6 }}>
+      <div className="grow stack" style={{ gap: 8 }}>
         <div>
-          <div className="title">{task.title}</div>
-          {task.description && <div className="muted">{task.description}</div>}
+          <div className="row">
+            <span className="title">{task.title}</span>
+            {task.time && !done && <Badge>{task.time}</Badge>}
+          </div>
+          {task.description && !done && <div className="muted">{task.description}</div>}
           {task.notes && !open && <div className="help">Notes: {task.notes}</div>}
         </div>
+        {!done && task.steps.length > 0 && (
+          <ol className="steps">
+            {task.steps.map((s) => (
+              <li key={s}>{s}</li>
+            ))}
+          </ol>
+        )}
+        {!done && task.links.length > 0 && (
+          <div className="row">
+            {task.links.map((l) => (
+              <ExtLink key={l.url} href={l.url} className="link-btn">
+                {l.label}
+              </ExtLink>
+            ))}
+          </div>
+        )}
         {open && (
           <div className="stack" style={{ gap: 8 }}>
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes, account numbers to look up later, links…" aria-label="Notes" />
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes: confirmation numbers, where you saved documents…" aria-label="Notes" />
             <div className="row">
               <button
                 className="btn btn-sm btn-primary"
@@ -103,10 +122,10 @@ export function Todo({ state, dash, go }: SectionProps) {
     <>
       <PageHeader
         title="Things you need to do"
-        subtitle="AI agents can run the day-to-day, but some things legally and practically need a human. This list updates itself as you configure the business."
+        subtitle="Everything the business needs from you, in order. Agents run the rest. Each legal or account step has exact instructions and a direct link."
       />
 
-      <Card title="Needed for the agents to work">
+      <Card title="Right now">
         {actions.length === 0 ? (
           <EmptyState title="All clear">Every agent has the inputs, funding and approvals it needs.</EmptyState>
         ) : (
@@ -115,7 +134,7 @@ export function Todo({ state, dash, go }: SectionProps) {
       </Card>
 
       <Card
-        title={`Setup checklist (${done}/${state.tasks.length})`}
+        title={`Legal & accounts: only you can do these (${done}/${state.tasks.length})`}
         actions={<span className="muted">{state.tasks.length ? Math.round((done / state.tasks.length) * 100) : 0}% complete</span>}
       >
         <ProgressBar value={done} max={state.tasks.length} label="Checklist progress" />

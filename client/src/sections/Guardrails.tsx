@@ -63,6 +63,14 @@ export function Guardrails({ state, dash, go }: SectionProps) {
           </Field>
         </div>
         <div className="form-actions">
+          <button
+            className="btn"
+            disabled={state.finance.cashBalanceCents <= 0}
+            title="Monthly cap = half your cash, daily cap = a tenth of that"
+            onClick={() => void dash.run(() => api.recommendedGuardrails(), "Recommended caps applied.")}
+          >
+            Apply recommended caps
+          </button>
           <button className="btn" disabled={!dirty} onClick={() => setDraft(saved)}>
             Discard changes
           </button>

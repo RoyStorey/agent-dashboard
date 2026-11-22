@@ -896,3 +896,160 @@ pre {
   background: rgb(0 0 0 / 0.35);
   z-index: 15;
 }
+
+/* ---------- v2 additions ---------- */
+
+.step-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.step-dot.done {
+  background: var(--good);
+  border-color: var(--good);
+  color: #fff;
+}
+
+.step {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.step .grow {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.step-num {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 11px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+ol.steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.choice {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.choice-card {
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border: 2px solid var(--border);
+}
+
+.choice-card.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.pnl td,
+.pnl th {
+  padding: 6px 10px;
+}
+
+.pnl tr.total td {
+  font-weight: 700;
+  border-top: 2px solid var(--text);
+}
+
+.pnl tr.sub td {
+  font-weight: 600;
+  border-top: 1px solid var(--text);
+}
+
+.pnl td.indent {
+  padding-left: 26px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.segmented button {
+  border: 0;
+  background: var(--surface);
+  color: var(--muted);
+  padding: 6px 12px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.segmented button.active {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.source-tag {
+  font-size: 12px;
+  color: var(--good);
+  font-weight: 600;
+}
+
+.idea {
+  border: 1px solid var(--border);
+}
+
+.idea.chosen {
+  border: 2px solid var(--good);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 8px 16px;
+}
+
+.kv div span {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.kv div strong {
+  font-variant-numeric: tabular-nums;
+}
