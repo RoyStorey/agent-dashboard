@@ -63,6 +63,7 @@ export function defaultState(): DashboardState {
     security: { passwordHash: null, passwordSalt: null, passwordUpdatedAt: null },
     shipments: [],
     supplies: [],
+    shopify: { autoSync: true, shopName: null, connectedAt: null, lastSyncAt: null, lastSyncAdded: 0, lastError: null, lastErrorAt: null },
   };
 }
 
@@ -117,6 +118,7 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
     aiUsage: Array.isArray(raw.aiUsage) ? raw.aiUsage : [],
     shipments: Array.isArray(raw.shipments) ? raw.shipments : [],
     supplies: Array.isArray(raw.supplies) ? raw.supplies : [],
+    shopify: { ...base.shopify, ...raw.shopify },
     security: { ...base.security, ...raw.security },
     // A research job cannot survive a restart: mark any that were running as failed.
     research: (raw.research ?? []).map((j) =>

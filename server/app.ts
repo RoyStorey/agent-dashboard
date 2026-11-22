@@ -20,6 +20,7 @@ import { maskWebhook, type DiscordNotifier } from "./discord.ts";
 import { autofillAgent, refreshSuggestedInputs, resolveInputs } from "./inputs.ts";
 import { registerSetupRoutes } from "./setupRoutes.ts";
 import { logQueued, parseShipment } from "./shippingInput.ts";
+import { ShopifyService } from "./shopify.ts";
 import { lowSupplies } from "../shared/shipping.ts";
 import { LoginLimiter, Sessions, clearedCookie, hashPassword, readCookie, sessionCookie, SESSION_COOKIE, verifyPassword } from "./auth.ts";
 import { aiThisMonth } from "./finance.ts";
@@ -56,6 +57,8 @@ export interface AppOptions {
   notifier?: DiscordNotifier;
   /** Signed-in browsers (only used when a dashboard password is set). */
   sessions?: Sessions;
+  /** Shopify connection (order import). */
+  shopify?: ShopifyService;
 }
 
 /** Parses a revenue report: either a net payout, or gross sales with optional refunds, fees and units. */
@@ -644,6 +647,7 @@ export function createApp(opts: AppOptions): express.Express {
         ...s.shipments.filter((sh) => sh.status === "shipped" || sh.status === "cancelled").slice(-50),
       ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       supplies: s.supplies,
+      shopify: s.shopify,
       security: { passwordSet: Boolean(s.security.passwordHash) },
       guardrails: s.guardrails,
       funding: [...s.funding].reverse(),
@@ -1112,7 +1116,14 @@ export function createApp(opts: AppOptions): express.Express {
     sendState(res);
   });
 
-  registerSetupRoutes(owner, { store, now, sendState, research: opts.research ?? anthropicResearch, notifier: opts.notifier });
+  registerSetupRoutes(owner, {
+    store,
+    now,
+    sendState,
+    research: opts.research ?? anthropicResearch,
+    notifier: opts.notifier,
+    shopify: opts.shopify ?? new ShopifyService(store, undefined, now),
+  });
 
   app.use("/api", owner);
 

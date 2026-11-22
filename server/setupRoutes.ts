@@ -13,6 +13,7 @@ import { FULFILLMENT_LABEL, defaultSupplies } from "../shared/shipping.ts";
 import { parseShipment, logQueued, setShipmentStatus, parseSupplies, unlinkRemovedSupplies } from "./shippingInput.ts";
 import { autofillAgent, missingInputs, refreshSuggestedInputs, suggestValue } from "./inputs.ts";
 import { RESEARCH_MODEL, ResearchFailure, type ResearchRunner } from "./research.ts";
+import type { ShopifyService } from "./shopify.ts";
 import { estimateCostCents, type UsageCounts } from "../shared/aiPricing.ts";
 import { defaultState, log, newId, type Store } from "./store.ts";
 import { HttpError, asBody, bad, bool, cents, obj, str, strArray, type Body } from "./validate.ts";
@@ -23,6 +24,7 @@ export interface SetupContext {
   sendState: (res: Response) => void;
   research: ResearchRunner;
   notifier?: DiscordNotifier;
+  shopify: ShopifyService;
 }
 
 const CUSTOM_VAULT_KEY = /^custom_[a-z0-9_]{1,40}$/;
@@ -145,6 +147,37 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
     sendState(res);
   });
 
+  owner.post("/shopify/test", async (_req, res) => {
+    try {
+      await ctx.shopify.test();
+    } catch (err) {
+      throw bad(err instanceof Error ? err.message : String(err));
+    }
+    sendState(res);
+  });
+
+  owner.post("/shopify/sync", async (_req, res) => {
+    let added = 0;
+    try {
+      added = await ctx.shopify.sync("manual");
+    } catch (err) {
+      throw bad(err instanceof Error ? err.message : String(err));
+    }
+    res.set("X-Orders-Added", String(added));
+    sendState(res);
+  });
+
+  owner.put("/shopify", (req, res) => {
+    const body = asBody(req.body);
+    const auto = bool(body, "autoSync");
+    if (auto === undefined) throw bad('"autoSync" is required.');
+    store.mutate((s) => {
+      s.shopify.autoSync = auto;
+      log(s, "Owner", "info", auto ? "Shopify orders will be imported automatically." : "Stopped importing Shopify orders automatically.", now());
+    });
+    sendState(res);
+  });
+
   owner.put("/supplies", (req, res) => {
     const body = asBody(req.body);
     store.mutate((s) => {
@@ -167,6 +200,7 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
     if (!svc && !label?.trim()) throw bad("Custom credentials need a label.");
     store.mutate((s) => {
       s.vault[key] = { value: value.trim(), updatedAt: now().toISOString(), ...(svc ? {} : { label: label!.trim() }) };
+      if (key === "shopify_admin") s.shopify = { ...s.shopify, shopName: null, connectedAt: null, lastError: null, lastErrorAt: null };
       const users = s.agents.filter((a) => a.inputFields.some((f) => (f.vault ?? []).includes(key) || (f.vault?.includes("llm") && svc?.category === "ai")));
       log(s, "Owner", "success", `Saved ${svc?.label ?? label}${users.length ? ` (available to ${users.length} agent${users.length === 1 ? "" : "s"})` : ""}.`, now());
     });
@@ -179,6 +213,7 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
       if (!s.vault[key]) throw new HttpError(404, "Credential not found.");
       const label = findService(key)?.label ?? s.vault[key]!.label ?? key;
       delete s.vault[key];
+      if (key === "shopify_admin") s.shopify = { ...s.shopify, shopName: null, connectedAt: null, lastError: null, lastErrorAt: null };
       log(s, "Owner", "warning", `Removed ${label} from Credentials. Agents that used it now need it again.`, now());
     });
     sendState(res);

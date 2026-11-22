@@ -198,6 +198,18 @@ export function computeOwnerActions(state: DashboardState, finance: FinanceSumma
       });
     }
   }
+  const shopifySaved = (state.vault.shopify_admin?.value ?? "").trim() !== "";
+  if (state.shopify.lastError && shopifySaved) {
+    out.push({ id: "shopify-error", severity: "warning", title: "Shopify connection problem", detail: state.shopify.lastError, section: "shipping" });
+  } else if (shopifySaved && state.shopify.shopName === null && state.shopify.lastSyncAt === null && state.business.channels.includes("shopify")) {
+    out.push({
+      id: "shopify-test",
+      severity: "info",
+      title: "Test your Shopify connection",
+      detail: "One click on Pack & ship confirms it works, then new orders appear there by themselves.",
+      section: "shipping",
+    });
+  }
   if (state.business.channels.length > 0 && state.business.fulfillmentMode === null) {
     out.push({
       id: "fulfillment-mode",

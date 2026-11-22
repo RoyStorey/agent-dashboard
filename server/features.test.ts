@@ -10,6 +10,7 @@ import { createApp, parseRevenue } from "./app.ts";
 import { DiscordNotifier, routeEntry, type DiscordPayload } from "./discord.ts";
 import { autofillAgent, resolveInputs } from "./inputs.ts";
 import type { ResearchRunner } from "./research.ts";
+import { SHOPIFY_API_VERSION, ShopifyService, parseShopifyCredential } from "./shopify.ts";
 import { defaultState, migrate, newId, Store } from "./store.ts";
 
 const NOW = new Date(2026, 10, 22, 12, 0, 0);
@@ -919,5 +920,143 @@ describe("shipping orders yourself", () => {
     a1.actions = a1.actions.filter((a) => a.key !== "order_supplies");
     const s2 = migrate({ agents: [a1] } as unknown as Partial<DashboardState> & Record<string, unknown>);
     assert.ok(!s2.agents[0]!.actions.some((a) => a.key === "order_supplies"));
+  });
+});
+
+describe("Connect Shopify", () => {
+  const CRED = "https://Roys-Cords.myshopify.com/\nclient-id-123\nclient-secret-456";
+  function order(name: string, fin: string, ful: string, withAddress = true, extra: Record<string, unknown> = {}) {
+    return {
+      name,
+      createdAt: "2026-11-20T10:00:00Z",
+      note: name === "#1001" ? "Gift wrap please" : null,
+      displayFinancialStatus: fin,
+      displayFulfillmentStatus: ful,
+      shippingLine: { title: "Standard" },
+      shippingAddress: withAddress
+        ? { name: "Pat Doe", company: null, address1: "12 Elm St", address2: "Apt 4", city: "Springfield", provinceCode: "IL", zip: "62701", countryCodeV2: "US" }
+        : null,
+      lineItems: { nodes: [{ title: "Braided cord", quantity: 2, requiresShipping: true }] },
+      ...extra,
+    };
+  }
+
+  function fakeShopify(opts: { tokenStatus?: number; graphqlErrors?: string } = {}) {
+    const calls: Array<{ url: string; body?: string; headers: Record<string, string> }> = [];
+    let orders = [
+      order("#1003", "PAID", "UNFULFILLED"),
+      order("#1002", "PENDING", "UNFULFILLED"), // not paid
+      order("#1001", "PAID", "PARTIALLY_FULFILLED"),
+      order("#1000", "PAID", "FULFILLED"), // already shipped
+      order("#0999", "PAID", "UNFULFILLED", false), // no address (pickup/digital)
+    ];
+    const fetchImpl = async (url: string, init: { method: string; headers: Record<string, string>; body?: string }) => {
+      calls.push({ url, body: init.body, headers: init.headers });
+      const reply = (status: number, body: unknown) => ({ ok: status < 400, status, text: async () => (typeof body === "string" ? body : JSON.stringify(body)) });
+      if (url.endsWith("/admin/oauth/access_token")) {
+        if (opts.tokenStatus) return reply(opts.tokenStatus, '{"error":"invalid_client"}');
+        return reply(200, { access_token: "shpca_token", scope: "read_orders", expires_in: 86399 });
+      }
+      if (url.includes("/graphql.json")) {
+        if (init.headers["X-Shopify-Access-Token"] !== "shpca_token") return reply(401, "unauthorized");
+        if (opts.graphqlErrors) return reply(200, { errors: [{ message: opts.graphqlErrors }] });
+        const q = JSON.parse(init.body!).query as string;
+        if (q.includes("shop")) return reply(200, { data: { shop: { name: "Roy's Cords" } } });
+        return reply(200, { data: { orders: { nodes: orders } } });
+      }
+      return reply(404, "not found");
+    };
+    return { fetchImpl, calls, setOrders: (o: typeof orders) => (orders = o) };
+  }
+
+  async function setup(opts: Parameters<typeof fakeShopify>[0] = {}) {
+    const store = new Store(null);
+    const fake = fakeShopify(opts);
+    const shopify = new ShopifyService(store, fake.fetchImpl);
+    const app = createApp({ store, shopify });
+    await request(app).put("/api/business").set(json).send({ product: "Braided cord" }).expect(200);
+    await request(app).put("/api/fulfillment").set(json).send({ mode: "self" }).expect(200);
+    await request(app).put("/api/vault/shopify_admin").set(json).send({ value: CRED }).expect(200);
+    return { store, app, shopify, ...fake };
+  }
+
+  it("reads the three pasted lines, forgiving https:// and capitals", () => {
+    assert.deepEqual(parseShopifyCredential(CRED), { shop: "roys-cords.myshopify.com", clientId: "client-id-123", clientSecret: "client-secret-456" });
+    assert.deepEqual(parseShopifyCredential("my-store.myshopify.com\nshpat_abc"), { shop: "my-store.myshopify.com", accessToken: "shpat_abc" });
+    assert.throws(() => parseShopifyCredential("my-store.com\na\nb"), /myshopify address/);
+    assert.throws(() => parseShopifyCredential("my-store.myshopify.com\nonly-id"), /Client secret on line 3/);
+  });
+
+  it("connects using the Client ID and secret, and reuses the token", async () => {
+    const { app, store, calls } = await setup();
+    const st = (await request(app).post("/api/shopify/test").set(json).send({}).expect(200)).body as StateResponse;
+    assert.equal(st.shopify.shopName, "Roy's Cords");
+    const tokenCall = calls.find((c) => c.url === "https://roys-cords.myshopify.com/admin/oauth/access_token")!;
+    const form = new URLSearchParams(tokenCall.body);
+    assert.equal(form.get("grant_type"), "client_credentials");
+    assert.equal(form.get("client_id"), "client-id-123");
+    assert.equal(form.get("client_secret"), "client-secret-456");
+    assert.ok(calls.some((c) => c.url === `https://roys-cords.myshopify.com/admin/api/${SHOPIFY_API_VERSION}/graphql.json`));
+    await request(app).post("/api/shopify/sync").set(json).send({}).expect(200);
+    assert.equal(calls.filter((c) => c.url.endsWith("/access_token")).length, 1, "token fetched once, then reused");
+    assert.ok(!JSON.stringify(st).includes("client-secret-456"), "the secret never reaches the browser");
+    assert.ok(store.get().activity.some((a) => a.message.includes("Connected to Shopify")));
+  });
+
+  it("imports only paid, unshipped orders with an address, oldest first, and never twice", async () => {
+    const { app, store, setOrders } = await setup();
+    const res = await request(app).post("/api/shopify/sync").set(json).send({}).expect(200);
+    assert.equal(res.headers["x-orders-added"], "2");
+    const queued = store.get().shipments;
+    assert.deepEqual(queued.map((s) => s.orderRef), ["#1001", "#1003"]);
+    const first = queued[0]!;
+    assert.equal(first.recipientName, "Pat Doe");
+    assert.equal(first.address, "12 Elm St\nApt 4\nSpringfield, IL 62701");
+    assert.equal(first.service, "Standard");
+    assert.equal(first.notes, "Gift wrap please");
+    assert.equal(first.createdBy, "Shopify");
+    const product = store.get().supplies.find((s) => s.kind === "product")!;
+    const mailer = store.get().supplies.find((s) => /Mailers/.test(s.name))!;
+    assert.equal(first.items[0]!.supplyId, product.id, "a one-product shop links every item to that product");
+    assert.equal(first.packagingSupplyId, mailer.id);
+    // Cancel one in the queue; syncing again must not bring it back or duplicate the other.
+    await request(app).patch(`/api/shipments/${first.id}`).set(json).send({ status: "cancelled" }).expect(200);
+    await request(app).post("/api/shopify/sync").set(json).send({}).expect(200);
+    assert.equal(store.get().shipments.length, 2);
+    // A new order arrives.
+    setOrders([order("#1004", "PAID", "UNFULFILLED", true, { shippingAddress: { name: "Ana B", company: "Acme", address1: "1 Main", address2: null, city: "Toronto", provinceCode: "ON", zip: "M5V", countryCodeV2: "CA" } })]);
+    await request(app).post("/api/shopify/sync").set(json).send({}).expect(200);
+    const newest = store.get().shipments.find((s) => s.orderRef === "#1004")!;
+    assert.equal(newest.address, "Acme\n1 Main\nToronto, ON M5V\nCA", "country shown for non-US addresses");
+  });
+
+  it("explains wrong credentials clearly and logs the problem once", async () => {
+    const { app, store } = await setup({ tokenStatus: 401 });
+    const r = await request(app).post("/api/shopify/test").set(json).send({}).expect(400);
+    assert.match(r.body.error, /refused the Client ID \/ Client secret/);
+    await request(app).post("/api/shopify/sync").set(json).send({}).expect(400);
+    assert.equal(store.get().activity.filter((a) => a.message.startsWith("Shopify: ")).length, 1, "same problem logged once");
+    const st = (await request(app).get("/api/state")).body as StateResponse;
+    assert.ok(st.ownerActions.some((a) => a.id === "shopify-error"));
+  });
+
+  it("explains Shopify's customer-data permission", async () => {
+    const { app } = await setup({ graphqlErrors: "This app is not approved to access the Order object. See https://shopify.dev/docs/apps/launch/protected-customer-data" });
+    const r = await request(app).post("/api/shopify/sync").set(json).send({}).expect(400);
+    assert.match(r.body.error, /protected customer data/);
+  });
+
+  it("imports automatically only when shipping yourself with auto-import on", async () => {
+    const { app, store, shopify } = await setup();
+    await request(app).put("/api/shopify").set(json).send({ autoSync: false }).expect(200);
+    await shopify.tick();
+    assert.equal(store.get().shipments.length, 0);
+    await request(app).put("/api/shopify").set(json).send({ autoSync: true }).expect(200);
+    await request(app).put("/api/fulfillment").set(json).send({ mode: "provider" }).expect(200);
+    await shopify.tick();
+    assert.equal(store.get().shipments.length, 0);
+    await request(app).put("/api/fulfillment").set(json).send({ mode: "self" }).expect(200);
+    await shopify.tick();
+    assert.equal(store.get().shipments.length, 2);
   });
 });

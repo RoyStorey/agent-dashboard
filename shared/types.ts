@@ -429,6 +429,20 @@ export interface DashboardState {
   security: SecuritySettings;
   shipments: Shipment[];
   supplies: SupplyItem[];
+  shopify: ShopifySettings;
+}
+
+/** Connection to the owner's Shopify store (credentials live in the vault as "shopify_admin"). */
+export interface ShopifySettings {
+  /** Import paid, unshipped orders into Pack & ship every few minutes. */
+  autoSync: boolean;
+  /** Set after a successful connection test. */
+  shopName: string | null;
+  connectedAt: string | null;
+  lastSyncAt: string | null;
+  lastSyncAdded: number;
+  lastError: string | null;
+  lastErrorAt: string | null;
 }
 
 /* ---------- Computed views sent to the client ---------- */
@@ -544,6 +558,7 @@ export interface StateResponse {
   /** Open shipments plus the 50 most recent finished ones, newest first. */
   shipments: Shipment[];
   supplies: SupplyItem[];
+  shopify: ShopifySettings;
   guardrails: GlobalGuardrails;
   funding: FundingEntry[];
   requests: ActionRequest[];
