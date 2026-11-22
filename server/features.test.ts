@@ -491,3 +491,70 @@ describe("recommended caps", () => {
     assert.equal(st.guardrails.dailySpendLimitCents, 105000);
   });
 });
+
+describe("start over and backups", () => {
+  it("clears everything, keeps a restorable backup, and can keep credentials", async () => {
+    const dir = (await import("node:fs")).mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "agent-dash-reset-"));
+    try {
+      const store = new Store(dir);
+      const app = createApp({ store });
+      await request(app).put("/api/business").set(json).send({ name: "Test Co", product: "Test cables" }).expect(200);
+      await request(app).put("/api/vault/anthropic").set(json).send({ value: "sk-ant-keepme1234" }).expect(200);
+      await request(app).post("/api/agents/recommended").set(json).send({}).expect(200);
+      await request(app).post("/api/funding").set(json).send({ type: "deposit", amountCents: 50000 }).expect(200);
+      const oldToken = store.get().agents[0]!.apiToken;
+
+      await request(app).post("/api/reset").set(json).send({}).expect(400);
+      await request(app).post("/api/reset").set(json).send({ confirm: "start over" }).expect(400);
+      let st = (await request(app).post("/api/reset").set(json).send({ confirm: "START OVER", keepCredentials: true }).expect(200)).body as StateResponse;
+      assert.equal(st.business.name, "");
+      assert.equal(st.agents.length, 0);
+      assert.equal(st.funding.length, 0);
+      assert.equal(st.finance.cashBalanceCents, 0);
+      assert.equal(st.activity.length, 1);
+      assert.ok(st.vault.some((v) => v.key === "anthropic" && v.set), "credentials kept when asked");
+      await request(app).get("/api/agent/v1/config").set("Authorization", `Bearer ${oldToken}`).expect(401);
+
+      // Survives a restart (written to disk).
+      assert.equal(new Store(dir).get().business.name, "");
+
+      const backups = (await request(app).get("/api/backups").expect(200)).body.backups as Array<{ name: string; businessName: string; agents: number }>;
+      assert.equal(backups.length, 1);
+      assert.equal(backups[0]!.businessName, "Test Co");
+      assert.equal(backups[0]!.agents, 8);
+
+      st = (await request(app).post("/api/reset").set(json).send({ confirm: "START OVER" }).expect(200)).body as StateResponse;
+      assert.equal(st.vault.length, 0, "credentials cleared by default");
+
+      st = (await request(app).post(`/api/backups/${backups[0]!.name}/restore`).set(json).send({}).expect(200)).body as StateResponse;
+      assert.equal(st.business.name, "Test Co");
+      assert.equal(st.agents.length, 8);
+      assert.equal(st.finance.depositedCents, 50000);
+      await request(app).post("/api/backups/..%2Fdb.json/restore").set(json).send({}).expect(404);
+      assert.equal((await request(app).get("/api/backups")).body.backups.length, 3, "a safety backup is taken before each reset and restore");
+    } finally {
+      (await import("node:fs")).rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("restoring does not re-post old history to Discord", async () => {
+    const store = new Store(null);
+    const sent: unknown[] = [];
+    const notifier = new DiscordNotifier(store, async (_u, b) => {
+      sent.push(b);
+      return { status: 204 };
+    });
+    notifier.attach();
+    const app = createApp({ store, notifier });
+    await request(app).put("/api/discord").set(json).send({ defaultWebhookUrl: HOOK, enabled: true }).expect(200);
+    await request(app).put("/api/guardrails").set(json).send({ killSwitch: true }).expect(200);
+    await new Promise((r) => setTimeout(r, 10));
+    const before = sent.length;
+    assert.ok(before >= 1);
+    await request(app).post("/api/reset").set(json).send({ confirm: "START OVER" }).expect(200);
+    const name = store.listBackups()[0]!.name;
+    await request(app).post(`/api/backups/${name}/restore`).set(json).send({}).expect(200);
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(sent.length, before);
+  });
+});

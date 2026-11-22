@@ -93,6 +93,7 @@ All money is stored as whole cents. Daily and monthly caps use calendar days and
 
 ## Data and security
 
+- **Start over:** Settings & start over → type `START OVER`. This erases everything, optionally keeping your saved credentials. A backup is saved first and can be restored from the same page. The newest 20 backups are kept in `data/backups/`.
 - Everything is stored in `data/db.json` (file mode 600). Back it up, and don't commit it. It's already in `.gitignore`.
 - Secrets (agent API keys) are stored in that file in plain text, so protect your computer the same way you protect saved passwords. The dashboard UI never displays a saved secret again. Only the agent that owns a secret receives it, via its config.
 - The server listens on `127.0.0.1` only. The owner API rejects requests addressed to other hostnames (DNS rebinding) and cross-site requests, and changes must be sent as JSON.

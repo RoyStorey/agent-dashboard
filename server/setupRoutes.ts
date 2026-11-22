@@ -9,7 +9,7 @@ import { isWebhookUrl, type DiscordNotifier } from "./discord.ts";
 import { computeFinance } from "./finance.ts";
 import { autofillAgent, missingInputs, suggestValue } from "./inputs.ts";
 import type { ResearchRunner } from "./research.ts";
-import { log, newId, type Store } from "./store.ts";
+import { defaultState, log, newId, type Store } from "./store.ts";
 import { HttpError, asBody, bad, bool, cents, obj, str, strArray, type Body } from "./validate.ts";
 
 export interface SetupContext {
@@ -290,6 +290,54 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
     const result = await ctx.notifier.sendSummary(now());
     if (!result.ok) throw bad(result.error ?? "Discord did not accept the message.");
     res.json({ ok: true });
+  });
+
+  /* ---------- Start over & backups ---------- */
+
+  owner.get("/backups", (_req, res) => {
+    res.json({ backups: store.listBackups() });
+  });
+
+  owner.post("/reset", (req, res) => {
+    const body = asBody(req.body);
+    if (body.confirm !== "START OVER") throw bad('Type START OVER to confirm.');
+    const keepCredentials = bool(body, "keepCredentials") ?? false;
+    const old = store.get();
+    const t = now();
+    const backup = store.createBackup("before-start-over", t);
+    const fresh = defaultState();
+    if (keepCredentials) fresh.vault = structuredClone(old.vault);
+    log(
+      fresh,
+      "Owner",
+      "warning",
+      `Started over. Everything was cleared${keepCredentials ? " except saved credentials" : ""}. The previous data is saved as backup ${backup}.`,
+      t,
+    );
+    store.replace(fresh);
+    sendState(res);
+  });
+
+  owner.post("/backups/:name/restore", (req, res) => {
+    const name = req.params.name as string;
+    let restored: DashboardState;
+    try {
+      restored = store.readBackup(name);
+    } catch (err) {
+      throw new HttpError(404, err instanceof Error ? err.message : "Backup not found.");
+    }
+    const t = now();
+    const safety = store.createBackup("before-restore", t);
+    log(restored, "Owner", "warning", `Restored backup ${name}. The data from just before the restore is saved as ${safety}.`, t);
+    store.replace(restored);
+    sendState(res);
+  });
+
+  owner.delete("/backups/:name", (req, res) => {
+    const name = req.params.name as string;
+    if (!store.listBackups().some((b) => b.name === name)) throw new HttpError(404, "Backup not found.");
+    store.deleteBackup(name);
+    res.json({ backups: store.listBackups() });
   });
 
   /* ---------- AI product research ---------- */

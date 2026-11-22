@@ -144,13 +144,111 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
  * half-written file. Node runs request handlers one at a time, and all
  * mutations here are synchronous, so there are no write races.
  */
+export interface BackupInfo {
+  name: string;
+  createdAt: string;
+  reason: string;
+  businessName: string;
+  product: string;
+  agents: number;
+  sizeBytes: number;
+}
+
+const BACKUP_NAME = /^backup-\d{8}-\d{6}-\d{3}-[a-z-]{1,40}\.json$/;
+export const MAX_BACKUPS = 20;
+
 export class Store {
   private state: DashboardState;
   private readonly file: string | null;
+  private readonly backupsDir: string | null;
+  /** Backups for stores without a data directory (tests). */
+  private readonly memoryBackups = new Map<string, string>();
 
   constructor(dataDir: string | null) {
     this.file = dataDir ? path.join(dataDir, "db.json") : null;
+    this.backupsDir = dataDir ? path.join(dataDir, "backups") : null;
     this.state = this.load(dataDir);
+  }
+
+  /** Saves a copy of the current data. Returns the backup's name. Keeps the newest MAX_BACKUPS. */
+  createBackup(reason: string, now: Date = new Date()): string {
+    const p = (n: number, w = 2) => String(n).padStart(w, "0");
+    const stamp = `${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}-${p(now.getMilliseconds(), 3)}`;
+    const safeReason = reason.toLowerCase().replace(/[^a-z-]+/g, "-").slice(0, 40) || "manual";
+    let name = `backup-${stamp}-${safeReason}.json`;
+    const exists = (n: string) => (this.backupsDir ? fs.existsSync(path.join(this.backupsDir, n)) : this.memoryBackups.has(n));
+    for (let i = 1; exists(name); i++) name = `backup-${stamp}-${safeReason}-${"x".repeat(i)}.json`;
+    const body = JSON.stringify(this.state, null, 2);
+    if (this.backupsDir) {
+      fs.mkdirSync(this.backupsDir, { recursive: true });
+      fs.writeFileSync(path.join(this.backupsDir, name), body, { mode: 0o600 });
+    } else {
+      this.memoryBackups.set(name, body);
+    }
+    const all = this.listBackups();
+    for (const old of all.slice(MAX_BACKUPS)) this.deleteBackup(old.name);
+    return name;
+  }
+
+  private backupNames(): string[] {
+    if (!this.backupsDir) return [...this.memoryBackups.keys()];
+    if (!fs.existsSync(this.backupsDir)) return [];
+    return fs.readdirSync(this.backupsDir).filter((n) => BACKUP_NAME.test(n));
+  }
+
+  private readRaw(name: string): string {
+    if (!BACKUP_NAME.test(name)) throw new Error("Invalid backup name.");
+    if (!this.backupsDir) {
+      const v = this.memoryBackups.get(name);
+      if (v === undefined) throw new Error("Backup not found.");
+      return v;
+    }
+    const file = path.join(this.backupsDir, name);
+    if (!fs.existsSync(file)) throw new Error("Backup not found.");
+    return fs.readFileSync(file, "utf8");
+  }
+
+  listBackups(): BackupInfo[] {
+    const out: BackupInfo[] = [];
+    for (const name of this.backupNames()) {
+      try {
+        const raw = this.readRaw(name);
+        const data = JSON.parse(raw) as Partial<DashboardState>;
+        const m = /^backup-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})-(\d{3})-([a-z-]+?)(?:-x+)?\.json$/.exec(name)!;
+        out.push({
+          name,
+          createdAt: new Date(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!, +m[7]!).toISOString(),
+          reason: m[8]!.replace(/-/g, " "),
+          businessName: data.business?.name ?? "",
+          product: data.business?.product ?? "",
+          agents: data.agents?.length ?? 0,
+          sizeBytes: Buffer.byteLength(raw),
+        });
+      } catch {
+        // Skip unreadable files rather than failing the whole list.
+      }
+    }
+    return out.sort((a, b) => b.name.localeCompare(a.name));
+  }
+
+  readBackup(name: string): DashboardState {
+    return migrate(JSON.parse(this.readRaw(name)) as Partial<DashboardState> & Record<string, unknown>);
+  }
+
+  deleteBackup(name: string): void {
+    if (!BACKUP_NAME.test(name)) return;
+    if (this.backupsDir) fs.rmSync(path.join(this.backupsDir, name), { force: true });
+    else this.memoryBackups.delete(name);
+  }
+
+  /**
+   * Replaces all data at once (start over / restore). Deliberately skips the
+   * activity listeners, so restoring a backup never re-posts old history to Discord.
+   */
+  replace(next: DashboardState): void {
+    const copy = structuredClone(next);
+    this.writeFile(copy);
+    this.state = copy;
   }
 
   private load(dataDir: string | null): DashboardState {

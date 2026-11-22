@@ -4,6 +4,16 @@ import type { StateResponse } from "../../shared/types.ts";
 
 export class ApiError extends Error {}
 
+export interface BackupInfo {
+  name: string;
+  createdAt: string;
+  reason: string;
+  businessName: string;
+  product: string;
+  agents: number;
+  sizeBytes: number;
+}
+
 async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
     method,
@@ -61,6 +71,10 @@ export const api = {
   discordSummary: () => call<{ ok: boolean }>("POST", "/api/discord/summary"),
   startResearch: (brief: Record<string, unknown>) => call<StateResponse>("POST", "/api/research", brief),
   chooseIdea: (jobId: string, index: number) => call<StateResponse>("POST", `/api/research/${jobId}/choose`, { index }),
+  backups: () => call<{ backups: BackupInfo[] }>("GET", "/api/backups"),
+  startOver: (keepCredentials: boolean) => call<StateResponse>("POST", "/api/reset", { confirm: "START OVER", keepCredentials }),
+  restoreBackup: (name: string) => call<StateResponse>("POST", `/api/backups/${encodeURIComponent(name)}/restore`),
+  deleteBackup: (name: string) => call<{ backups: BackupInfo[] }>("DELETE", `/api/backups/${encodeURIComponent(name)}`),
 };
 
 export interface Dashboard {

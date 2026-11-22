@@ -13,6 +13,7 @@ import { Credentials } from "./sections/Credentials.tsx";
 import { Financials } from "./sections/Financials.tsx";
 import { Integrations } from "./sections/Integrations.tsx";
 import { Overview } from "./sections/Overview.tsx";
+import { Settings } from "./sections/Settings.tsx";
 import { Setup, setupSteps } from "./sections/Setup.tsx";
 import { Todo } from "./sections/Todo.tsx";
 
@@ -41,6 +42,7 @@ const NAV: NavItem[] = [
   { key: "integrations", label: "Discord", group: "Control" },
   { key: "guardrails", label: "Guardrails", group: "Control" },
   { key: "funding", label: "Funding", group: "Control" },
+  { key: "settings", label: "Settings & start over", group: "Control" },
 ];
 
 function readHash(): { section: SectionKey | null; agentId?: string } {
@@ -199,6 +201,7 @@ export function App() {
           {section === "integrations" && <Integrations {...props} />}
           {section === "guardrails" && <Guardrails {...props} />}
           {section === "funding" && <Funding {...props} />}
+          {section === "settings" && <Settings {...props} />}
         </main>
       </div>
       <Toasts toasts={dash.toasts} onDismiss={dash.dismissToast} />
