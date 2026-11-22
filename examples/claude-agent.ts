@@ -77,13 +77,29 @@ ${cfg.guardrails.priceFloorCents !== null ? `Prices: never set a price below ${d
 
 Money: your remaining budget is ${dollars(cfg.budget?.remainingCents)}; per transaction ${dollars(cfg.guardrails.agent.perTransactionLimitCents)}; per day ${dollars(cfg.guardrails.agent.dailySpendLimitCents)}.
 
-How you work:
+${shippingSection(cfg)}How you work:
 - Every real-world action goes through request_action first. Amounts are integer cents (2500 = $25.00); use 0 for actions that cost nothing.
 - If a request is pending_approval, call wait_for_approval; if it stays pending, move on and say so in your summary.
 - Only call perform_action on approved requests. If you decide not to go ahead, call cancel_request so the reserved money returns to your budget.
 - A denied or rejected request is final. Read the reasons; do not retry the same thing to get around a limit.
 - Use log_progress for notable steps so the owner can follow along.
 - Finish with a short summary of what you did, what is waiting on the owner, and what you recommend next.`;
+}
+
+/** When the owner ships orders themselves, tell the agent what is at home and what is running low. */
+function shippingSection(cfg: AgentConfig): string {
+  const f = cfg.fulfillment;
+  if (f.mode !== "self") return "";
+  const stock = f.supplies.map((s) => `- ${s.name} [id ${s.id}]: ${s.onHand} ${s.unit} on hand, reorder at ${s.reorderAt}, usual order ${s.reorderQty}`).join("\n");
+  return `Shipping: the owner packs and ships orders by hand from home. ${f.toPackCount} order(s) are waiting to be packed.
+Stock at home:
+${stock || "- (none listed)"}
+${f.lowSupplies.length ? `Running low: ${f.lowSupplies.map((s) => s.name).join(", ")}.` : "Nothing is running low."}
+- For anything running low, request "order_supplies" (if you are allowed it) with the cost in cents and a description that is a ready-to-use shopping list: store, exact product, link, quantity and price. The owner buys it after approving.
+- When supplies arrive, call record_delivery with the stock item's id.
+- When you learn about a new order, call queue_shipment with exactly what to pack, the packaging and the shipping service.
+
+`;
 }
 
 function describe(req: ActionRequest): string {
@@ -201,6 +217,68 @@ function makeTools(cfg: AgentConfig) {
       run: async ({ message, level }) => {
         await dashboard.log(message, level ?? "info");
         return "Logged.";
+      },
+    }),
+
+    ...(cfg.fulfillment.mode === "self" ? shippingTools() : []),
+  ];
+}
+
+/** Extra tools for when the owner ships orders themselves. */
+function shippingTools() {
+  return [
+    betaTool({
+      name: "queue_shipment",
+      description: "Add an order to the owner's packing queue with exactly what to pack, the packaging and the shipping service.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          order_ref: { type: "string", description: "The store's order number, e.g. #1001" },
+          recipient_name: { type: "string" },
+          address: { type: "string", description: "Full mailing address, one line per row" },
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { name: { type: "string" }, qty: { type: "integer", minimum: 1 }, supply_id: { type: "string" } },
+              required: ["name", "qty"],
+              additionalProperties: false,
+            },
+          },
+          packaging: { type: "string", description: "e.g. Poly mailer 10×13 in" },
+          packaging_supply_id: { type: "string", description: "Stock item id of that packaging, if listed" },
+          service: { type: "string", description: "e.g. USPS Ground Advantage" },
+          notes: { type: "string" },
+        },
+        required: ["order_ref", "recipient_name", "address", "items"],
+        additionalProperties: false,
+      },
+      run: async (i) => {
+        await dashboard.queueShipment({
+          orderRef: i.order_ref,
+          recipientName: i.recipient_name,
+          address: i.address,
+          items: i.items.map((it) => ({ name: it.name, qty: it.qty, supplyId: it.supply_id ?? null })),
+          packaging: i.packaging,
+          packagingSupplyId: i.packaging_supply_id ?? null,
+          service: i.service,
+          notes: i.notes,
+        });
+        return "Queued for the owner to pack.";
+      },
+    }),
+    betaTool({
+      name: "record_delivery",
+      description: "Record that supplies or stock arrived at the owner's home (adds to the count).",
+      inputSchema: {
+        type: "object",
+        properties: { supply_id: { type: "string" }, quantity: { type: "integer", minimum: 1 }, note: { type: "string" } },
+        required: ["supply_id", "quantity"],
+        additionalProperties: false,
+      },
+      run: async ({ supply_id, quantity, note }) => {
+        await dashboard.adjustSupply(supply_id, quantity, note ?? "Delivered");
+        return "Recorded.";
       },
     }),
   ];

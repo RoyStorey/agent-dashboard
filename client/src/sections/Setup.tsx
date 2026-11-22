@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { economicsComplete } from "../../../shared/economics.ts";
 import { formatCents } from "../../../shared/money.ts";
 import { channelNames } from "../../../shared/channels.ts";
+import { FULFILLMENT_LABEL } from "../../../shared/shipping.ts";
 import { findService } from "../../../shared/services.ts";
 import { AGENT_TEMPLATES } from "../../../shared/templates.ts";
 import type { AgentView, StateResponse } from "../../../shared/types.ts";
@@ -25,11 +26,12 @@ export function setupSteps(state: StateResponse): SetupStep[] {
   return [
     { key: "product", title: "Choose what to sell", done: b.product.trim() !== "" },
     { key: "channels", title: "Choose where to sell", done: b.channels.length > 0 },
+    { key: "shipping", title: "Choose how orders get shipped", done: b.fulfillmentMode !== null },
     { key: "you", title: "Your contact details", done: b.ownerEmail.trim() !== "" && b.shippingAddress.trim() !== "" },
     { key: "team", title: "Add your agent team", done: hasAgents },
     { key: "economics", title: "Price and cost per unit", done: economicsComplete(state.economics) },
     { key: "keys", title: "Paste your keys", done: hasAgents && missingVaultKeys(state).length === 0 },
-    { key: "details", title: "Answer what only you know", done: hasAgents && state.agents.every((a) => manualMissingFields(a, b.channels).length === 0) },
+    { key: "details", title: "Answer what only you know", done: hasAgents && state.agents.every((a) => manualMissingFields(a, b.channels, b.fulfillmentMode === "self").length === 0) },
     { key: "fund", title: "Fund the business", done: state.finance.depositedCents > 0 },
     { key: "caps", title: "Spending caps", done: g.dailySpendLimitCents !== null || g.monthlySpendLimitCents !== null },
     { key: "discord", title: "Discord updates", done: state.discord.enabled, optional: true },
@@ -61,8 +63,8 @@ function Step(props: { n: number; step: SetupStep; children: ReactNode; open: bo
   );
 }
 
-function AgentQuickFields({ agent, dash, channels }: { agent: AgentView; dash: SectionProps["dash"]; channels: string[] }) {
-  const fields = manualMissingFields(agent, channels);
+function AgentQuickFields({ agent, dash, channels, selfShipping }: { agent: AgentView; dash: SectionProps["dash"]; channels: string[]; selfShipping: boolean }) {
+  const fields = manualMissingFields(agent, channels, selfShipping);
   const [values, setValues] = useState<Record<string, string>>({});
   if (fields.length === 0) return null;
   return (
@@ -116,7 +118,10 @@ export function Setup({ state, dash, go }: SectionProps) {
   const tasksLeft = state.tasks.filter((t) => t.status === "todo").length;
 
   // Every step is visible; the next unfinished one and anything not done stays expanded.
-  const isOpen = (i: number) => !steps[i]!.done || i === firstOpen;
+  const isOpen = (key: string) => {
+    const i = steps.findIndex((x) => x.key === key);
+    return !steps[i]!.done || i === firstOpen;
+  };
   const s = (key: string) => steps.find((x) => x.key === key)!;
   let n = 0;
 
@@ -136,7 +141,7 @@ export function Setup({ state, dash, go }: SectionProps) {
         <ProgressBar value={doneCount} max={required.length} label="Setup progress" kind="progress" />
       </Card>
 
-      <Step n={++n} step={s("product")} open={isOpen(0)}>
+      <Step n={++n} step={s("product")} open={isOpen("product")}>
         <p className="muted">Know your product? Type it in. Not sure? AI researches what sells right now and fills everything in for you.</p>
         <div className="row">
           <button className="btn btn-primary" onClick={() => go("business")}>
@@ -145,7 +150,7 @@ export function Setup({ state, dash, go }: SectionProps) {
         </div>
       </Step>
 
-      <Step n={++n} step={s("channels")} open={isOpen(1)}>
+      <Step n={++n} step={s("channels")} open={isOpen("channels")}>
         <p className="muted">
           Shopify (your own store), Etsy, Amazon, eBay, Walmart or TikTok Shop. Compare fees, approval difficulty, pros and cons side by side.
           {state.business.channels.length > 0 ? ` Selling on: ${channelNames(state.business.channels)}.` : ""}
@@ -157,7 +162,24 @@ export function Setup({ state, dash, go }: SectionProps) {
         </div>
       </Step>
 
-      <Step n={++n} step={s("you")} open={isOpen(2)}>
+      <Step n={++n} step={s("shipping")} open={isOpen("shipping")}>
+        <p className="muted">
+          Ship orders yourself (the AI tells you exactly what to pack and keeps supplies stocked), use a fulfillment company, or Amazon FBA.
+          {state.business.fulfillmentMode ? ` Chosen: ${FULFILLMENT_LABEL[state.business.fulfillmentMode]}.` : ""}
+        </p>
+        <div className="row">
+          {state.business.fulfillmentMode === null && (
+            <button className="btn btn-primary" onClick={() => void dash.run(() => api.setFulfillment("self"), "You'll ship orders yourself. Stock at home is set up.")}>
+              I'll ship orders myself
+            </button>
+          )}
+          <button className="btn" onClick={() => go("shipping")}>
+            See shipping options
+          </button>
+        </div>
+      </Step>
+
+      <Step n={++n} step={s("you")} open={isOpen("you")}>
         <p className="muted">Used by agents: Customer Service escalates to your email, Sourcing ships samples to your address.</p>
         <form
           className="stack"
@@ -182,7 +204,7 @@ export function Setup({ state, dash, go }: SectionProps) {
         </form>
       </Step>
 
-      <Step n={++n} step={s("team")} open={isOpen(3)}>
+      <Step n={++n} step={s("team")} open={isOpen("team")}>
         <p className="muted">One agent per job: {AGENT_TEMPLATES.map((t) => t.name).join(", ")}. Each gets sensible spending limits and fills in what it can from your profile.</p>
         <div className="row">
           <button className="btn btn-primary" onClick={() => void dash.run(() => api.addRecommendedTeam(), "Team added.")}>
@@ -194,7 +216,7 @@ export function Setup({ state, dash, go }: SectionProps) {
         </div>
       </Step>
 
-      <Step n={++n} step={s("economics")} open={isOpen(4)}>
+      <Step n={++n} step={s("economics")} open={isOpen("economics")}>
         <p className="muted">Sale price and cost per unit. Filled in automatically if you picked a researched product. Sets the lowest price agents may sell at, and powers every profit number.</p>
         <div>
           <button className="btn btn-primary" onClick={() => go("financials")}>
@@ -203,7 +225,7 @@ export function Setup({ state, dash, go }: SectionProps) {
         </div>
       </Step>
 
-      <Step n={++n} step={s("keys")} open={isOpen(5)}>
+      <Step n={++n} step={s("keys")} open={isOpen("keys")}>
         {state.agents.length === 0 ? (
           <p className="muted">Add your team first; then this lists exactly which keys it needs.</p>
         ) : missingKeys.length === 0 ? (
@@ -221,14 +243,14 @@ export function Setup({ state, dash, go }: SectionProps) {
         )}
       </Step>
 
-      <Step n={++n} step={s("details")} open={isOpen(6)}>
+      <Step n={++n} step={s("details")} open={isOpen("details")}>
         {state.agents.length === 0 ? (
           <p className="muted">Add your team first.</p>
         ) : (
           <>
             <p className="muted">Most details are filled in from your profile and plan. These are the few only you can answer.</p>
             {state.agents.map((a) => (
-              <AgentQuickFields key={a.id} agent={a} dash={dash} channels={state.business.channels} />
+              <AgentQuickFields key={a.id} agent={a} dash={dash} channels={state.business.channels} selfShipping={state.business.fulfillmentMode === "self"} />
             ))}
             <div className="row">
               <button className="btn btn-sm" onClick={() => void dash.run(() => api.autofill(false), "Filled in what we could.")}>
@@ -239,7 +261,7 @@ export function Setup({ state, dash, go }: SectionProps) {
         )}
       </Step>
 
-      <Step n={++n} step={s("fund")} open={isOpen(7)}>
+      <Step n={++n} step={s("fund")} open={isOpen("fund")}>
         <p className="muted">
           Enter your starting budget. {state.allocation.auto ? "It is split across agents by job automatically." : "Then allocate it on the Funding page."} No money moves in your bank; this sets what agents may spend.
         </p>
@@ -263,7 +285,7 @@ export function Setup({ state, dash, go }: SectionProps) {
         </form>
       </Step>
 
-      <Step n={++n} step={s("caps")} open={isOpen(8)}>
+      <Step n={++n} step={s("caps")} open={isOpen("caps")}>
         <p className="muted">A hard daily and monthly ceiling across all agents. Recommended: 75% of your cash per month and 35% per day, so the first inventory order still fits in one day.</p>
         <div className="row">
           <button className="btn btn-primary" disabled={state.finance.cashBalanceCents <= 0} onClick={() => void dash.run(() => api.recommendedGuardrails(), "Caps applied.")}>
@@ -275,7 +297,7 @@ export function Setup({ state, dash, go }: SectionProps) {
         </div>
       </Step>
 
-      <Step n={++n} step={s("discord")} open={isOpen(9)}>
+      <Step n={++n} step={s("discord")} open={isOpen("discord")}>
         <p className="muted">Each agent posts updates for its area to its own channel; approvals and a daily finance summary go to HQ.</p>
         <div>
           <button className="btn" onClick={() => go("integrations")}>
@@ -284,7 +306,7 @@ export function Setup({ state, dash, go }: SectionProps) {
         </div>
       </Step>
 
-      <Step n={++n} step={s("live")} open={isOpen(10)}>
+      <Step n={++n} step={s("live")} open={isOpen("live")}>
         {readyDrafts.length > 0 ? (
           <>
             <p className="muted">Ready: {readyDrafts.map((a) => a.name).join(", ")}. Then give each agent's token to the program that runs it (Agent team → agent → Connect).</p>

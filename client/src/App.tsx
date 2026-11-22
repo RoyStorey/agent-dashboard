@@ -16,6 +16,7 @@ import { Login } from "./sections/Login.tsx";
 import { Money, realMoneyConnected } from "./sections/Money.tsx";
 import { Overview } from "./sections/Overview.tsx";
 import { Settings } from "./sections/Settings.tsx";
+import { Shipping } from "./sections/Shipping.tsx";
 import { Setup, setupSteps } from "./sections/Setup.tsx";
 import { Todo } from "./sections/Todo.tsx";
 import { useTheme } from "./theme.ts";
@@ -38,6 +39,7 @@ const NAV: NavItem[] = [
   { key: "todo", label: "Things you need to do", group: "Business" },
   { key: "business", label: "Business & product", group: "Business" },
   { key: "financials", label: "Financials", group: "Business" },
+  { key: "shipping", label: "Pack & ship", group: "Business" },
   { key: "agents", label: "Agent team", group: "Agents" },
   { key: "approvals", label: "Approvals", group: "Agents" },
   { key: "activity", label: "Activity", group: "Agents" },
@@ -105,6 +107,7 @@ export function App() {
     },
     agents: { n: state.agents.length, alert: false },
     setup: { n: setupLeft, alert: false },
+    shipping: { n: state.shipments.filter((s) => s.status === "to_pack").length, alert: state.shipments.some((s) => s.status === "to_pack") },
     money: { n: state.tasks.filter((t) => t.category === "money" && t.status === "todo" && !t.waitsFor).length, alert: false },
     credentials: { n: new Set(state.readiness.flatMap((r) => r.missingVaultKeys)).size, alert: false },
     approvals: {
@@ -224,6 +227,7 @@ export function App() {
           {section === "funding" && <Funding {...props} />}
           {section === "settings" && <Settings {...props} />}
           {section === "money" && <Money {...props} />}
+          {section === "shipping" && <Shipping {...props} />}
         </main>
       </div>
       <Toasts toasts={dash.toasts} onDismiss={dash.dismissToast} />

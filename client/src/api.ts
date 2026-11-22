@@ -66,6 +66,10 @@ export const api = {
   recordSales: (r: { grossSalesCents: number; refundsCents: number; feesCents: number; unitsSold?: number; note: string }) =>
     call<StateResponse>("POST", "/api/funding", { type: "revenue", ...r }),
   updateEconomics: (e: Record<string, number>) => call<StateResponse>("PUT", "/api/economics", e),
+  setFulfillment: (mode: "self" | "provider" | "marketplace" | null) => call<StateResponse>("PUT", "/api/fulfillment", { mode }),
+  addShipment: (s: Record<string, unknown>) => call<StateResponse>("POST", "/api/shipments", s),
+  updateShipment: (id: string, status: string, trackingNumber?: string) => call<StateResponse>("PATCH", `/api/shipments/${id}`, { status, trackingNumber }),
+  saveSupplies: (supplies: unknown[]) => call<StateResponse>("PUT", "/api/supplies", { supplies }),
   updateChannels: (channels: string[]) => call<StateResponse>("PUT", "/api/channels", { channels }),
   applyChannelFees: (key: string) => call<StateResponse>("POST", `/api/channels/${encodeURIComponent(key)}/apply-fees`),
   saveVault: (key: string, value: string, label?: string) => call<StateResponse>("PUT", `/api/vault/${encodeURIComponent(key)}`, { value, label }),

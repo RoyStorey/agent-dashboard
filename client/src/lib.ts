@@ -30,9 +30,13 @@ export function missingVaultKeys(state: StateResponse): string[] {
 }
 
 /** Required fields with no value that no credential can fill: the owner types these on the agent. */
-export function manualMissingFields(agent: AgentView, channels: string[] = []): InputField[] {
+export function manualMissingFields(agent: AgentView, channels: string[] = [], selfShipping = false): InputField[] {
   return agent.inputFields.filter(
-    (f) => f.required && agent.inputSources[f.key]?.type === "none" && fieldVaultKeys(agent, f, channels).length === 0,
+    (f) =>
+      f.required &&
+      !(selfShipping && f.notNeededWhenSelfShipping) &&
+      agent.inputSources[f.key]?.type === "none" &&
+      fieldVaultKeys(agent, f, channels).length === 0,
   );
 }
 

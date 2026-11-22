@@ -37,7 +37,24 @@ export interface AgentConfig {
     };
   };
   budget: { budgetCents: number; spentCents: number; remainingCents: number; spentTodayCents: number } | undefined;
+  fulfillment: {
+    mode: "self" | "provider" | "marketplace" | null;
+    supplies: SupplyItem[];
+    lowSupplies: SupplyItem[];
+    toPackCount: number;
+  };
   serverTime: string;
+}
+
+export interface SupplyItem {
+  id: string;
+  name: string;
+  kind: "product" | "packaging";
+  unit: string;
+  onHand: number;
+  reorderAt: number;
+  reorderQty: number;
+  usedPerShipment: number;
 }
 
 export class DashboardError extends Error {
@@ -111,6 +128,26 @@ export class DashboardClient {
   /** Report sales. Send the breakdown when you have it so the P&L shows gross sales, refunds and fees. */
   reportRevenue(r: { grossSalesCents: number; refundsCents?: number; feesCents?: number; unitsSold?: number; note?: string } | { amountCents: number; note?: string }): Promise<unknown> {
     return this.call("POST", "/revenue", r);
+  }
+
+  /** Add an order to the owner's packing queue (when the owner ships orders themselves). */
+  queueShipment(s: {
+    orderRef: string;
+    channel?: string;
+    recipientName: string;
+    address: string;
+    items: Array<{ name: string; qty: number; supplyId?: string | null }>;
+    packaging?: string;
+    packagingSupplyId?: string | null;
+    service?: string;
+    notes?: string;
+  }): Promise<unknown> {
+    return this.call("POST", "/shipments", s);
+  }
+
+  /** Record stock arriving (positive) or being used up (negative) at the owner's home. */
+  adjustSupply(id: string, delta: number, note: string): Promise<unknown> {
+    return this.call("POST", `/supplies/${encodeURIComponent(id)}/adjust`, { delta, note });
   }
 
   /** Post a report; the dashboard routes it to this agent's Discord channel. */

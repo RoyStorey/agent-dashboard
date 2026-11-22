@@ -114,6 +114,21 @@ Report AI model usage after **each** model call, so the owner sees AI costs and 
 
 The cost is estimated from a built-in price list for current Claude models. For any other model, include `"costCents"` with the actual cost. The response is `{ "monthCostCents", "limitCents", "overLimit", "costCents" }`. **Stop working when `overLimit` is true.** This endpoint still works while the kill switch is on.
 
+## Shipping orders yourself
+
+When the owner ships orders by hand (`fulfillment.mode` is `"self"` in `/config`), `/config` also lists `fulfillment.supplies` (stock at home), `lowSupplies` and `toPackCount`.
+
+- `POST /shipments` adds an order to the owner's packing queue:
+  ```json
+  { "orderRef": "#1001", "channel": "Shopify", "recipientName": "Pat Doe", "address": "12 Elm St\nSpringfield, IL 62701",
+    "items": [{ "name": "Braided cord", "qty": 2, "supplyId": "<stock item id>" }],
+    "packaging": "Poly mailer 10×13 in", "packagingSupplyId": "<stock item id>", "service": "USPS Ground Advantage", "notes": "" }
+  ```
+  A duplicate `orderRef` returns 409. When the owner marks it shipped, the linked items, the packaging and per-package supplies (labels) are subtracted from stock.
+- `GET /shipments?status=to_pack` lists the queue.
+- `POST /supplies/:id/adjust` with `{ "delta": 100, "note": "Delivered" }` records stock arriving (or a negative correction).
+- To buy supplies, request the `order_supplies` action with the cost, and put a shopping list in the description (store, item, link, quantity). It needs the owner's approval by default.
+
 ## `POST /report`
 
 ```json

@@ -14,8 +14,9 @@ export function defaultSupplies(productName: string, monthlyUnits: number, newId
       reorderQty: perMonth * 2,
       usedPerShipment: 0,
     },
-    { id: newId(), name: "Mailers or boxes (sized to fit the product)", kind: "packaging", unit: "mailers", onHand: 0, reorderAt: Math.ceil(perMonth / 2), reorderQty: Math.max(50, perMonth * 2), usedPerShipment: 0 },
-    { id: newId(), name: "Shipping labels (4×6 in)", kind: "packaging", unit: "labels", onHand: 0, reorderAt: Math.ceil(perMonth / 2), reorderQty: Math.max(100, perMonth * 2), usedPerShipment: 1 },
+    // Packaging: reorder at about two weeks left, buy about a month at a time (small packs are fine to start).
+    { id: newId(), name: "Mailers or boxes (sized to fit the product)", kind: "packaging", unit: "mailers", onHand: 0, reorderAt: Math.ceil(perMonth / 2), reorderQty: Math.max(50, perMonth), usedPerShipment: 0 },
+    { id: newId(), name: "Shipping labels (4×6 in)", kind: "packaging", unit: "labels", onHand: 0, reorderAt: Math.ceil(perMonth / 2), reorderQty: Math.max(100, perMonth), usedPerShipment: 1 },
     { id: newId(), name: "Packing tape", kind: "packaging", unit: "rolls", onHand: 0, reorderAt: 1, reorderQty: 6, usedPerShipment: 0 },
   ];
 }
