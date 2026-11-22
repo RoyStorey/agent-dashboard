@@ -110,6 +110,66 @@ function ShipmentCard({ sh, dash }: { sh: Shipment; dash: SectionProps["dash"] }
   );
 }
 
+function ShopifyCard({ state, dash, go }: Pick<SectionProps, "state" | "dash" | "go">) {
+  const sh = state.shopify;
+  const saved = state.vault.some((v) => v.key === "shopify_admin" && v.set);
+  const connected = sh.shopName !== null || sh.lastSyncAt !== null;
+  const tone = sh.lastError ? "bad" : connected ? "good" : "neutral";
+  const status = sh.lastError ? "Problem" : connected ? `Connected${sh.shopName ? ` to ${sh.shopName}` : ""}` : saved ? "Not tested yet" : "Not set up";
+
+  return (
+    <Card title={<span className="row">Shopify orders <Badge tone={tone}>{status}</Badge></span>}>
+      {!saved ? (
+        <>
+          <p className="muted">
+            Connect your store and every paid order appears below by itself, with the address and items copied exactly. Save your store address, Client ID and
+            Client secret on Credentials first.
+          </p>
+          <div>
+            <button className="btn btn-primary" onClick={() => go("credentials")}>
+              Open Credentials
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="muted">
+            {sh.autoSync ? "Paid, unshipped orders are imported every 5 minutes." : "Automatic import is off; use “Check for new orders”."} Orders already in the
+            queue are never added twice.
+          </p>
+          {sh.lastError && (
+            <div className="banner banner-bad">
+              <span>{sh.lastError}</span>
+            </div>
+          )}
+          <div className="kv">
+            <div>
+              <span>Last checked</span>
+              <strong>{sh.lastSyncAt ? formatDateTime(sh.lastSyncAt) : "never"}</strong>
+            </div>
+            <div>
+              <span>New orders last time</span>
+              <strong>{sh.lastSyncAt ? sh.lastSyncAdded : "—"}</strong>
+            </div>
+          </div>
+          <div className="row">
+            <button className="btn" onClick={() => void dash.run(() => api.testShopify(), "Shopify connected.")}>
+              Test connection
+            </button>
+            <button className="btn btn-primary" onClick={() => void dash.run(() => api.syncShopify(), "Checked Shopify for new orders.")}>
+              Check for new orders
+            </button>
+            <label className="check">
+              <input type="checkbox" checked={sh.autoSync} onChange={() => void dash.run(() => api.setShopifyAutoSync(!sh.autoSync), sh.autoSync ? "Automatic import off." : "Automatic import on.")} />
+              Import automatically
+            </label>
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function StockTable({ supplies, dash }: { supplies: SupplyItem[]; dash: SectionProps["dash"] }) {
   const savedKey = JSON.stringify(supplies);
   const [rows, setRows] = useState<SupplyItem[]>(supplies);
@@ -222,7 +282,7 @@ function AddOrder({ state, dash }: Pick<SectionProps, "state" | "dash">) {
   const [f, setF] = useState(blank);
   return (
     <Card title="Add an order by hand">
-      <p className="muted">Normally the Inventory agent adds orders as they come in. Use this for anything it missed.</p>
+      <p className="muted">Shopify orders are added automatically once connected. Use this for orders from anywhere else.</p>
       <form
         className="stack"
         onSubmit={async (e) => {
@@ -280,7 +340,7 @@ function AddOrder({ state, dash }: Pick<SectionProps, "state" | "dash">) {
   );
 }
 
-export function Shipping({ state, dash }: SectionProps) {
+export function Shipping({ state, dash, go }: SectionProps) {
   const mode = state.business.fulfillmentMode;
   const toPack = state.shipments.filter((s) => s.status === "to_pack");
   const packed = state.shipments.filter((s) => s.status === "packed");
@@ -314,7 +374,7 @@ export function Shipping({ state, dash }: SectionProps) {
               <div>
                 <strong>The AI (Inventory agent)</strong>
                 <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
-                  <li>Adds each new order here with what to pack, the mailer and the shipping service</li>
+                  <li>New Shopify orders appear here by themselves (once connected), with what to pack and where it goes</li>
                   <li>Watches stock at home and asks to buy more before you run out</li>
                   <li>Posts new orders and a daily “to pack” count to Discord HQ</li>
                 </ul>
@@ -329,6 +389,8 @@ export function Shipping({ state, dash }: SectionProps) {
               </div>
             </div>
           </Card>
+
+          <ShopifyCard state={state} dash={dash} go={go} />
 
           <Card title={`Today's pick list (${pick.orders} order${pick.orders === 1 ? "" : "s"})`}>
             {pick.orders === 0 ? (

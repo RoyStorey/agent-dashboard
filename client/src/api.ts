@@ -66,6 +66,9 @@ export const api = {
   recordSales: (r: { grossSalesCents: number; refundsCents: number; feesCents: number; unitsSold?: number; note: string }) =>
     call<StateResponse>("POST", "/api/funding", { type: "revenue", ...r }),
   updateEconomics: (e: Record<string, number>) => call<StateResponse>("PUT", "/api/economics", e),
+  testShopify: () => call<StateResponse>("POST", "/api/shopify/test"),
+  syncShopify: () => call<StateResponse>("POST", "/api/shopify/sync"),
+  setShopifyAutoSync: (autoSync: boolean) => call<StateResponse>("PUT", "/api/shopify", { autoSync }),
   setFulfillment: (mode: "self" | "provider" | "marketplace" | null) => call<StateResponse>("PUT", "/api/fulfillment", { mode }),
   addShipment: (s: Record<string, unknown>) => call<StateResponse>("POST", "/api/shipments", s),
   updateShipment: (id: string, status: string, trackingNumber?: string) => call<StateResponse>("PATCH", `/api/shipments/${id}`, { status, trackingNumber }),

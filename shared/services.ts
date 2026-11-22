@@ -123,6 +123,7 @@ export const SERVICES: ServiceDef[] = [
       "Leave Webhooks API version as it is and click Create app (top right).",
       "On the app's page, install it on your store.",
       "Open the app's settings and copy the Client ID and Client secret.",
+      "Paste them below, then click Test connection on Pack & ship.",
     ],
     copy: [
       {
