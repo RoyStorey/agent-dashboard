@@ -16,20 +16,19 @@ import type {
   TaskCategory,
 } from "../shared/types.ts";
 import { createAgent, toView } from "./agents.ts";
+import { actionLabel, adjustSupply, agentById, cancelAction, completeAction, ownRequest, queueShipment, recordUsage, reportRevenue, revenueFields, submitAction, touch, writeReport } from "./agentOps.ts";
+import { agentConfig } from "./agentConfig.ts";
 import { maskWebhook, type DiscordNotifier } from "./discord.ts";
-import { autofillAgent, refreshSuggestedInputs, resolveInputs } from "./inputs.ts";
+import { autofillAgent, refreshSuggestedInputs } from "./inputs.ts";
 import { registerSetupRoutes } from "./setupRoutes.ts";
-import { logQueued, parseShipment } from "./shippingInput.ts";
 import { ShopifyService } from "./shopify.ts";
 import { AddressSearch } from "./address.ts";
-import { lowSupplies } from "../shared/shipping.ts";
 import { LoginLimiter, Sessions, clearedCookie, hashPassword, readCookie, sessionCookie, SESSION_COOKIE, verifyPassword } from "./auth.ts";
-import { aiThisMonth } from "./finance.ts";
 import { estimateCostCents } from "../shared/aiPricing.ts";
 import { anthropicResearch, type ResearchRunner } from "./research.ts";
 import { autoAllocate } from "./allocate.ts";
 import { computeFinance } from "./finance.ts";
-import { evaluate, hardLimitViolations, priceFloorCents } from "./guardrails.ts";
+import { hardLimitViolations } from "./guardrails.ts";
 import { computeOwnerActions, computeReadiness, missingInputs } from "./readiness.ts";
 import { log, newId, newToken, type Store } from "./store.ts";
 import {
@@ -106,19 +105,6 @@ const FUNDING_TYPES: readonly FundingType[] = ["deposit", "withdrawal", "revenue
 const LEVELS: readonly ActivityLevel[] = ["info", "warning", "error", "success"];
 const MAX_ACTIVITY_RETURNED = 300;
 
-function actionLabel(agent: Agent | undefined, key: string): string {
-  return agent?.actions.find((a) => a.key === key)?.label ?? key;
-}
-
-function revenueFields(rev: ReturnType<typeof parseRevenue>): Array<{ name: string; value: string }> {
-  const out = [{ name: "Net payout", value: formatCents(rev.amountCents) }];
-  if (rev.grossSalesCents !== undefined) out.unshift({ name: "Gross sales", value: formatCents(rev.grossSalesCents) });
-  if (rev.refundsCents) out.push({ name: "Refunds", value: formatCents(rev.refundsCents) });
-  if (rev.feesCents) out.push({ name: "Fees", value: formatCents(rev.feesCents) });
-  if (rev.unitsSold !== undefined) out.push({ name: "Units", value: String(rev.unitsSold) });
-  return out;
-}
-
 function maskVault(key: string, value: string): string {
   const svc = findService(key);
   if (svc && !svc.secret) return value;
@@ -184,71 +170,14 @@ export function createApp(opts: AppOptions): express.Express {
   });
 
   function currentAgent(state: DashboardState, res: Response): Agent {
-    const agent = state.agents.find((a) => a.id === res.locals.agentId);
-    if (!agent) throw new HttpError(401, "Agent no longer exists.");
-    return agent;
+    return agentById(state, res.locals.agentId as string);
   }
-
-  function touch(agent: Agent, at: Date): void {
-    agent.lastSeenAt = at.toISOString();
-  }
+  const me = (res: Response) => res.locals.agentId as string;
 
   agentApi.get("/config", (_req, res) => {
     const state = store.get();
     const agent = currentAgent(state, res);
-    const t = now();
-    const finance = computeFinance(state, t);
-    const af = finance.agents.find((a) => a.agentId === agent.id);
-    res.json({
-      agent: {
-        id: agent.id,
-        name: agent.name,
-        role: agent.role,
-        description: agent.description,
-        status: agent.status,
-        responsibilities: agent.responsibilities,
-        connection: agent.connection,
-      },
-      business: state.business,
-      economics: state.economics,
-      inputs: resolveInputs(state, agent).values,
-      inputFields: agent.inputFields.map((f) => ({ key: f.key, label: f.label, kind: f.kind, required: f.required })),
-      missingInputs: missingInputs(state, agent),
-      fulfillment: {
-        mode: state.business.fulfillmentMode,
-        supplies: state.supplies,
-        lowSupplies: lowSupplies(state.supplies),
-        toPackCount: state.shipments.filter((sh) => sh.status === "to_pack").length,
-      },
-      reporting: { discord: state.discord.enabled && Boolean(state.discord.agentWebhooks[agent.id] || state.discord.defaultWebhookUrl) },
-      actions: agent.actions.map((a) => ({
-        ...a,
-        allowed: agent.guardrails.allowedActions.includes(a.key),
-        alwaysRequiresApproval: agent.guardrails.approvalRequiredActions.includes(a.key),
-      })),
-      guardrails: {
-        killSwitch: state.guardrails.killSwitch,
-        agent: {
-          perTransactionLimitCents: agent.guardrails.perTransactionLimitCents,
-          dailySpendLimitCents: agent.guardrails.dailySpendLimitCents,
-          approvalThresholdCents: agent.guardrails.approvalThresholdCents,
-        },
-        ai: {
-          monthlyLimitCents: state.guardrails.aiMonthlyLimitCents,
-          monthCostCents: aiThisMonth(state, t),
-          overLimit: state.guardrails.aiMonthlyLimitCents !== null && aiThisMonth(state, t) >= state.guardrails.aiMonthlyLimitCents,
-        },
-        priceFloorCents: priceFloorCents(state, agent),
-        global: {
-          perTransactionLimitCents: state.guardrails.perTransactionLimitCents,
-          dailySpendLimitCents: state.guardrails.dailySpendLimitCents,
-          monthlySpendLimitCents: state.guardrails.monthlySpendLimitCents,
-          approvalThresholdCents: state.guardrails.approvalThresholdCents,
-        },
-      },
-      budget: af,
-      serverTime: t.toISOString(),
-    });
+    res.json(agentConfig(state, agent, now()));
   });
 
   agentApi.post("/heartbeat", (req, res) => {
@@ -282,53 +211,12 @@ export function createApp(opts: AppOptions): express.Express {
     const description = str(body, "description", { max: 2000 }) ?? "";
     const amountCents = cents(body, "amountCents") ?? 0;
     const priceCents = cents(body, "priceCents");
-    const request = store.mutate((s) => {
-      const agent = currentAgent(s, res);
-      const t = now();
-      touch(agent, t);
-      const ev = evaluate(s, agent, { action, amountCents, priceCents }, t);
-      const r: ActionRequest = {
-        id: newId(),
-        agentId: agent.id,
-        action,
-        description,
-        amountCents,
-        priceCents: priceCents ?? null,
-        actualAmountCents: null,
-        status: ev.decision,
-        reasons: ev.reasons,
-        createdAt: t.toISOString(),
-        decidedAt: ev.decision === "pending_approval" ? null : t.toISOString(),
-        decidedBy: ev.decision === "pending_approval" ? null : "guardrails",
-        closedAt: null,
-        resultNote: "",
-      };
-      s.requests.push(r);
-      const money = (amountCents > 0 ? ` for ${formatCents(amountCents)}` : "") + (priceCents !== undefined ? ` at a price of ${formatCents(priceCents)}` : "");
-      const label = actionLabel(agent, action);
-      const extra = { agentId: agent.id, amountCents, fields: description ? [{ name: "Why", value: description }] : undefined };
-      if (ev.decision === "approved") log(s, agent.name, "info", `Approved: ${label}${money}.`, t, { ...extra, kind: "request_approved" });
-      else if (ev.decision === "pending_approval")
-        log(s, agent.name, "warning", `Needs your approval: ${label}${money}. ${ev.reasons.join(" ")}`, t, {
-          ...extra,
-          kind: "request_pending",
-          title: `Approval needed: ${agent.name} wants to ${label.toLowerCase()}${money}`,
-        });
-      else log(s, agent.name, "error", `Denied: ${label}${money}. ${ev.reasons.join(" ")}`, t, { ...extra, kind: "request_denied" });
-      return r;
-    });
+    const request = store.mutate((s) => submitAction(s, me(res), { action, description, amountCents, priceCents }, now()));
     res.status(201).json({ request });
   });
 
-  function agentRequest(s: DashboardState, res: Response, id: string): { agent: Agent; request: ActionRequest } {
-    const agent = currentAgent(s, res);
-    const request = s.requests.find((r) => r.id === id && r.agentId === agent.id);
-    if (!request) throw new HttpError(404, "Request not found.");
-    return { agent, request };
-  }
-
   agentApi.get("/actions/:id", (req, res) => {
-    const { request } = agentRequest(store.get(), res, req.params.id);
+    const { request } = ownRequest(store.get(), me(res), req.params.id);
     res.json({ request });
   });
 
@@ -336,46 +224,14 @@ export function createApp(opts: AppOptions): express.Express {
     const body = asBody(req.body);
     const actual = cents(body, "actualAmountCents");
     const note = str(body, "note", { max: 2000 }) ?? "";
-    const request = store.mutate((s) => {
-      const { agent, request } = agentRequest(s, res, req.params.id);
-      if (request.status !== "approved") throw new HttpError(409, `Only approved requests can be completed (this one is ${request.status}).`);
-      const finalAmount = actual ?? request.amountCents;
-      if (finalAmount > request.amountCents) {
-        throw new HttpError(409, `Actual amount ${formatCents(finalAmount)} exceeds the approved ${formatCents(request.amountCents)}. Submit a new request for the difference.`);
-      }
-      const t = now();
-      touch(agent, t);
-      request.status = "completed";
-      request.actualAmountCents = finalAmount;
-      request.closedAt = t.toISOString();
-      request.resultNote = note;
-      const money = finalAmount > 0 ? ` (${formatCents(finalAmount)})` : "";
-      log(s, agent.name, "success", `Completed: ${actionLabel(agent, request.action)}${money}. ${note}`.trim(), t, {
-        kind: "request_closed",
-        agentId: agent.id,
-        amountCents: finalAmount,
-      });
-      return request;
-    });
+    const request = store.mutate((s) => completeAction(s, me(res), req.params.id, actual, note, now()));
     res.json({ request });
   });
 
   agentApi.post("/actions/:id/cancel", (req, res) => {
     const body = asBody(req.body);
     const note = str(body, "note", { max: 2000 }) ?? "";
-    const request = store.mutate((s) => {
-      const { agent, request } = agentRequest(s, res, req.params.id);
-      if (request.status !== "approved" && request.status !== "pending_approval") {
-        throw new HttpError(409, `Only approved or pending requests can be cancelled (this one is ${request.status}).`);
-      }
-      const t = now();
-      touch(agent, t);
-      request.status = "cancelled";
-      request.closedAt = t.toISOString();
-      request.resultNote = note;
-      log(s, agent.name, "info", `Cancelled: ${actionLabel(agent, request.action)}. ${note}`.trim(), t, { kind: "log", agentId: agent.id });
-      return request;
-    });
+    const request = store.mutate((s) => cancelAction(s, me(res), req.params.id, note, now()));
     res.json({ request });
   });
 
@@ -383,24 +239,7 @@ export function createApp(opts: AppOptions): express.Express {
     const body = asBody(req.body);
     const rev = parseRevenue(body);
     const note = str(body, "note", { max: 500 }) ?? "";
-    const entry = store.mutate((s) => {
-      const agent = currentAgent(s, res);
-      const t = now();
-      touch(agent, t);
-      const problems = hardLimitViolations(s, agent, { action: "report_revenue", amountCents: 0 }, t);
-      if (problems.length > 0) throw new HttpError(403, problems.join(" "));
-      const e = { id: newId(), type: "revenue" as const, ...rev, note, agentId: agent.id, createdAt: t.toISOString() };
-      s.funding.push(e);
-      log(s, agent.name, "success", `Reported revenue: ${formatCents(rev.amountCents)} net payout. ${note}`.trim(), t, {
-        kind: "revenue",
-        agentId: agent.id,
-        amountCents: rev.amountCents,
-        title: "Sales reported",
-        fields: revenueFields(rev),
-      });
-      if (s.allocation.auto) autoAllocate(s, t, "revenue");
-      return e;
-    });
+    const entry = store.mutate((s) => reportRevenue(s, me(res), rev, note, now()));
     res.status(201).json({ entry });
   });
 
@@ -415,25 +254,11 @@ export function createApp(opts: AppOptions): express.Express {
       cacheWriteTokens: cents(body, "cacheWriteTokens") ?? 0,
       webSearches: cents(body, "webSearches") ?? 0,
     };
-    const reported = cents(body, "costCents");
-    const costCents = reported ?? estimateCostCents(model, counts);
-    if (costCents === null) throw bad(`No price list for model "${model}". Include "costCents" with the cost you were charged.`);
-    const result = store.mutate((s) => {
-      const agent = currentAgent(s, res);
-      const t = now();
-      touch(agent, t);
-      const before = aiThisMonth(s, t);
-      s.aiUsage.push({ id: newId(), at: t.toISOString(), agentId: agent.id, label: label || agent.name, model, ...counts, costCents });
-      const after = before + costCents;
-      const limit = s.guardrails.aiMonthlyLimitCents;
-      if (limit !== null && before < limit && after >= limit) {
-        log(s, "System", "error", `AI usage budget reached: ${formatCents(after)} of ${formatCents(limit)} this month. Agent requests are now denied until next month or until you raise the cap on Guardrails.`, t, {
-          kind: "system",
-          title: "AI usage budget reached",
-        });
-      }
-      return { monthCostCents: after, limitCents: limit, overLimit: limit !== null && after >= limit, costCents };
-    });
+    const costCents = cents(body, "costCents");
+    if (costCents === undefined && estimateCostCents(model, counts) === null) {
+      throw bad(`No price list for model "${model}". Include "costCents" with the cost you were charged.`);
+    }
+    const result = store.mutate((s) => recordUsage(s, me(res), { model, label, counts, costCents }, now()));
     res.status(201).json(result);
   });
 
@@ -446,37 +271,16 @@ export function createApp(opts: AppOptions): express.Express {
 
   agentApi.post("/shipments", (req, res) => {
     const body = asBody(req.body);
-    const shipment = store.mutate((s) => {
-      const agent = currentAgent(s, res);
-      const t = now();
-      touch(agent, t);
-      if (s.guardrails.killSwitch) throw new HttpError(403, "Kill switch is on: all agent activity is stopped.");
-      const sh = parseShipment(s, body, agent.name, t);
-      if (sh.orderRef && s.shipments.some((x) => x.orderRef === sh.orderRef && x.status !== "cancelled")) {
-        throw new HttpError(409, `Order ${sh.orderRef} is already in the packing queue.`);
-      }
-      s.shipments.push(sh);
-      logQueued(s, sh, agent.name, t);
-      return sh;
-    });
+    const shipment = store.mutate((s) => queueShipment(s, me(res), body, now()));
     res.status(201).json({ shipment });
   });
 
   agentApi.post("/supplies/:id/adjust", (req, res) => {
     const body = asBody(req.body);
     const delta = body.delta;
-    if (typeof delta !== "number" || !Number.isSafeInteger(delta) || delta === 0 || Math.abs(delta) > 1_000_000) throw bad('"delta" must be a non-zero whole number.');
+    if (typeof delta !== "number") throw bad('"delta" must be a non-zero whole number.');
     const note = str(body, "note", { max: 500 }) ?? "";
-    const supply = store.mutate((s) => {
-      const agent = currentAgent(s, res);
-      const item = s.supplies.find((x) => x.id === req.params.id);
-      if (!item) throw new HttpError(404, "Stock item not found.");
-      const t = now();
-      touch(agent, t);
-      item.onHand += delta;
-      log(s, agent.name, "info", `${delta > 0 ? "Added" : "Removed"} ${Math.abs(delta)} ${item.unit} of ${item.name} (now ${item.onHand}). ${note}`.trim(), t, { kind: "log", agentId: agent.id });
-      return item;
-    });
+    const supply = store.mutate((s) => adjustSupply(s, me(res), req.params.id, delta, note, now()));
     res.json({ supply });
   });
 
@@ -493,12 +297,7 @@ export function createApp(opts: AppOptions): express.Express {
         return { name: str(o, "name", { max: 200, required: true }) as string, value: str(o, "value", { max: 1000, required: true }) as string };
       });
     }
-    const entry = store.mutate((s) => {
-      const agent = currentAgent(s, res);
-      const t = now();
-      touch(agent, t);
-      return log(s, agent.name, "info", text, t, { kind: "report", agentId: agent.id, title, fields });
-    });
+    const entry = store.mutate((s) => writeReport(s, me(res), title, text, fields, now()));
     res.status(201).json({ entry });
   });
 

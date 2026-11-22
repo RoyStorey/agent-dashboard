@@ -234,6 +234,8 @@ export interface ActionRequest {
   amountCents: Cents;
   /** For price-setting actions: the price the agent wants to set. */
   priceCents?: Cents | null;
+  /** Extra details the dashboard acts on after approval (e.g. the phase to move to). */
+  meta?: Record<string, string>;
   /** Set when completed; may be lower than amountCents. */
   actualAmountCents: Cents | null;
   status: RequestStatus;
