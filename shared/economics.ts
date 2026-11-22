@@ -39,6 +39,7 @@ export const EMPTY_ECONOMICS: UnitEconomics = {
   fulfillmentFeeCents: 0,
   marketplaceFeeBps: 1500,
   paymentFeeBps: 0,
+  perOrderFeeCents: 0,
   adSpendBps: 1500,
   returnRateBps: 500,
   fixedMonthlyCents: 0,
@@ -55,6 +56,7 @@ export interface UnitBreakdown {
   grossMarginBps: number | null;
   marketplaceFees: Cents;
   paymentFees: Cents;
+  perOrderFees: Cents;
   fulfillment: Cents;
   advertising: Cents;
   contribution: Cents;
@@ -81,12 +83,13 @@ export function unitBreakdown(e: UnitEconomics): UnitBreakdown {
   const grossProfit = netSales - landedCost;
   const marketplaceFees = bpsOf(grossSales, e.marketplaceFeeBps);
   const paymentFees = bpsOf(grossSales, e.paymentFeeBps);
+  const perOrderFees = e.perOrderFeeCents ?? 0;
   const fulfillment = e.fulfillmentFeeCents;
   const advertising = bpsOf(grossSales, e.adSpendBps);
-  const contribution = grossProfit - marketplaceFees - paymentFees - fulfillment - advertising;
+  const contribution = grossProfit - marketplaceFees - paymentFees - perOrderFees - fulfillment - advertising;
 
   const variableBps = e.returnRateBps + e.marketplaceFeeBps + e.paymentFeeBps + e.adSpendBps;
-  const fixedPerUnit = landedCost + fulfillment;
+  const fixedPerUnit = landedCost + fulfillment + perOrderFees;
   const breakEvenPrice = variableBps < 10_000 ? Math.ceil((fixedPerUnit * 10_000) / (10_000 - variableBps)) : null;
 
   const beforeAds = contribution + advertising;
@@ -101,6 +104,7 @@ export function unitBreakdown(e: UnitEconomics): UnitBreakdown {
     grossMarginBps: ratioBps(grossProfit, netSales),
     marketplaceFees,
     paymentFees,
+    perOrderFees,
     fulfillment,
     advertising,
     contribution,

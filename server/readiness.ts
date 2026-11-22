@@ -31,7 +31,7 @@ export function computeReadiness(state: DashboardState, finance: FinanceSummary)
 function manualMissing(state: DashboardState, agent: Agent): string[] {
   const { values } = resolveInputs(state, agent);
   return agent.inputFields
-    .filter((f) => f.required && (values[f.key] ?? "").trim() === "" && fieldVaultKeys(agent, f).length === 0)
+    .filter((f) => f.required && (values[f.key] ?? "").trim() === "" && fieldVaultKeys(agent, f, state.business.channels).length === 0)
     .map((f) => f.label);
 }
 

@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { EMPTY_ECONOMICS, formatBps, unitBreakdown } from "../../../shared/economics.ts";
 import { formatCents } from "../../../shared/money.ts";
+import { channelNames } from "../../../shared/channels.ts";
 import { findService } from "../../../shared/services.ts";
 import type { BusinessProfile, ProductIdea, ResearchJob, StateResponse } from "../../../shared/types.ts";
 import type { SectionProps } from "../App.tsx";
 import { api } from "../api.ts";
 import { Badge, Card, ExtLink, Field, MoneyInput, PageHeader, formatDateTime } from "../components/ui.tsx";
 import { isVaultSet } from "../lib.ts";
+import { ChannelChooser } from "./Channels.tsx";
 import { VaultItem } from "./Credentials.tsx";
 
 type Mode = "known" | "research";
@@ -33,6 +35,7 @@ export function Business(props: SectionProps) {
         </div>
       </Card>
 
+      <ChannelChooser {...props} />
       {mode === "research" && <Research {...props} />}
       <ProfileForm state={state} dash={props.dash} />
       <OwnerDetails state={state} dash={props.dash} />
@@ -79,7 +82,7 @@ function ProfileForm({ state, dash }: Pick<SectionProps, "state" | "dash">) {
           <Field label="Target customers" htmlFor="b-market">
             <textarea id="b-market" value={draft.targetMarket} onChange={set("targetMarket")} placeholder="e.g. Home-office and gaming setups in the US" />
           </Field>
-          <Field label="Sales channels" htmlFor="b-channels">
+          <Field label="Sales channels" htmlFor="b-channels" help="Set by “Where will you sell?” above; edit to add detail.">
             <textarea id="b-channels" value={draft.salesChannels} onChange={set("salesChannels")} placeholder="e.g. Amazon US, own Shopify store" />
           </Field>
         </div>
@@ -139,7 +142,7 @@ function Research({ state, dash }: SectionProps) {
   const [budget, setBudget] = useState<number | null>(state.finance.cashBalanceCents > 0 ? state.finance.cashBalanceCents : 300000);
   const [interests, setInterests] = useState("");
   const [avoid, setAvoid] = useState("");
-  const [channels, setChannels] = useState("");
+  const [channels, setChannels] = useState(channelNames(state.business.channels));
   const [location, setLocation] = useState("United States");
   const running = state.research.find((r) => r.status === "running");
   const hasKey = isVaultSet(state, "anthropic");

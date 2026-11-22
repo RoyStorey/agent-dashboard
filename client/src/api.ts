@@ -57,6 +57,8 @@ export const api = {
   recordSales: (r: { grossSalesCents: number; refundsCents: number; feesCents: number; unitsSold?: number; note: string }) =>
     call<StateResponse>("POST", "/api/funding", { type: "revenue", ...r }),
   updateEconomics: (e: Record<string, number>) => call<StateResponse>("PUT", "/api/economics", e),
+  updateChannels: (channels: string[]) => call<StateResponse>("PUT", "/api/channels", { channels }),
+  applyChannelFees: (key: string) => call<StateResponse>("POST", `/api/channels/${encodeURIComponent(key)}/apply-fees`),
   saveVault: (key: string, value: string, label?: string) => call<StateResponse>("PUT", `/api/vault/${encodeURIComponent(key)}`, { value, label }),
   deleteVault: (key: string) => call<StateResponse>("DELETE", `/api/vault/${encodeURIComponent(key)}`),
   addRecommendedTeam: (roles?: string[]) => call<StateResponse>("POST", "/api/agents/recommended", roles ? { roles } : {}),

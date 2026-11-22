@@ -11,6 +11,8 @@ export interface BusinessProfile {
   description: string;
   targetMarket: string;
   salesChannels: string;
+  /** Selected places to sell (keys from shared/channels.ts), primary first. */
+  channels: string[];
   /** Reused to auto-fill agent inputs (escalation contact, ship-to address). */
   ownerName: string;
   ownerEmail: string;
@@ -31,6 +33,8 @@ export interface UnitEconomics {
   fulfillmentFeeCents: Cents;
   marketplaceFeeBps: number;
   paymentFeeBps: number;
+  /** Fixed fees per order (card fee, listing renewal), assuming one unit per order. */
+  perOrderFeeCents: Cents;
   adSpendBps: number;
   returnRateBps: number;
   fixedMonthlyCents: Cents;

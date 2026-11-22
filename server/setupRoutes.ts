@@ -7,7 +7,9 @@ import { createAgent } from "./agents.ts";
 import { applyRebalance, autoAllocate } from "./allocate.ts";
 import { isWebhookUrl, type DiscordNotifier } from "./discord.ts";
 import { computeFinance } from "./finance.ts";
-import { autofillAgent, missingInputs, suggestValue } from "./inputs.ts";
+import { CHANNELS, channelNames, detectChannels, findChannel } from "../shared/channels.ts";
+import { syncChannelTasks } from "../shared/templates.ts";
+import { autofillAgent, missingInputs, refreshSuggestedInputs, suggestValue } from "./inputs.ts";
 import type { ResearchRunner } from "./research.ts";
 import { defaultState, log, newId, type Store } from "./store.ts";
 import { HttpError, asBody, bad, bool, cents, obj, str, strArray, type Body } from "./validate.ts";
@@ -45,7 +47,7 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
   owner.put("/economics", (req, res) => {
     const body = asBody(req.body);
     const patch: Partial<UnitEconomics> = {};
-    for (const k of ["salePriceCents", "unitCostCents", "inboundShippingCents", "otherPerUnitCents", "fulfillmentFeeCents", "fixedMonthlyCents"] as const) {
+    for (const k of ["salePriceCents", "unitCostCents", "inboundShippingCents", "otherPerUnitCents", "fulfillmentFeeCents", "perOrderFeeCents", "fixedMonthlyCents"] as const) {
       const v = cents(body, k);
       if (v !== undefined) patch[k] = v;
     }
@@ -56,9 +58,43 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
     const units = wholeNumber(body, "monthlyUnits", 10_000_000);
     if (units !== undefined) patch.monthlyUnits = units;
     store.mutate((s) => {
+      const before = structuredClone(s);
       Object.assign(s.economics, patch);
-      for (const a of s.agents) autofillAgent(s, a);
+      refreshSuggestedInputs(before, s);
       log(s, "Owner", "info", "Updated unit economics.", now());
+    });
+    sendState(res);
+  });
+
+  /* ---------- Sales channels ---------- */
+
+  owner.put("/channels", (req, res) => {
+    const body = asBody(req.body);
+    const channels = strArray(body, "channels", { maxItems: CHANNELS.length, maxLen: 32 });
+    if (!channels) throw bad('"channels" is required.');
+    for (const c of channels) if (!findChannel(c)) throw bad(`Unknown sales channel "${c}".`);
+    if (new Set(channels).size !== channels.length) throw bad("Each channel can only be listed once.");
+    store.mutate((s) => {
+      const before = structuredClone(s);
+      s.business.channels = channels;
+      s.business.salesChannels = channelNames(channels);
+      syncChannelTasks(s, newId);
+      refreshSuggestedInputs(before, s);
+      log(s, "Owner", "info", channels.length ? `Selling on: ${channelNames(channels)} (primary: ${findChannel(channels[0]!)!.name}).` : "Cleared sales channels.", now());
+    });
+    sendState(res);
+  });
+
+  owner.post("/channels/:key/apply-fees", (req, res) => {
+    const def = findChannel(req.params.key as string);
+    if (!def) throw new HttpError(404, "Unknown sales channel.");
+    if (!def.typicalFees) throw bad(`${def.name} fees vary; enter them yourself on Financials after checking ${def.name}'s fee page.`);
+    const fees = def.typicalFees;
+    store.mutate((s) => {
+      const before = structuredClone(s);
+      Object.assign(s.economics, fees);
+      refreshSuggestedInputs(before, s);
+      log(s, "Owner", "info", `Applied typical ${def.name} fees to the plan.`, now());
     });
     sendState(res);
   });
@@ -410,21 +446,27 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
       if (!job || job.status !== "done") throw new HttpError(404, "Research results not found.");
       const idea = job.ideas[index];
       if (!idea) throw bad("No idea at that position.");
+      const before = structuredClone(s);
       job.chosenIndex = index;
       const b = s.business;
       b.product = idea.product;
       b.description = [idea.niche, idea.whyNow].filter(Boolean).join(". ").slice(0, 5000);
       b.targetMarket = idea.targetAudience;
-      b.salesChannels = idea.salesChannels;
       b.productSource = "research";
+      // Channels the owner already picked win; otherwise take the idea's suggested channels.
+      if (b.channels.length === 0) b.channels = detectChannels(idea.salesChannels);
+      b.salesChannels = b.channels.length > 0 ? channelNames(b.channels) : idea.salesChannels;
+      syncChannelTasks(s, newId);
       const e = s.economics;
       e.salePriceCents = idea.salePriceCents;
       e.unitCostCents = idea.unitCostCents;
       e.inboundShippingCents = idea.inboundShippingCents;
       e.fulfillmentFeeCents = idea.fulfillmentFeeCents;
-      if (idea.marketplaceFeeBps > 0) e.marketplaceFeeBps = idea.marketplaceFeeBps;
+      const fees = findChannel(b.channels[0] ?? "")?.typicalFees;
+      if (fees) Object.assign(e, fees);
+      else if (idea.marketplaceFeeBps > 0) e.marketplaceFeeBps = idea.marketplaceFeeBps;
       e.monthlyUnits = idea.estimatedMonthlyUnits;
-      for (const a of s.agents) autofillAgent(s, a);
+      refreshSuggestedInputs(before, s);
       log(s, "Owner", "success", `Chose product: ${idea.title}. Business profile and unit economics filled in.`, now());
     });
     sendState(res);

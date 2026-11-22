@@ -2,7 +2,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { EMPTY_ECONOMICS } from "../shared/economics.ts";
-import { AUTO_DONE, DEFAULT_TASKS, findTemplate, makeDefaultTasks } from "../shared/templates.ts";
+import { detectChannels, findChannel } from "../shared/channels.ts";
+import { AUTO_DONE, DEFAULT_TASKS, channelTaskText, findTemplate, makeDefaultTasks, syncChannelTasks } from "../shared/templates.ts";
 import type { ActivityEntry, ActivityLevel, DashboardState, DiscordSettings } from "../shared/types.ts";
 
 export const MAX_ACTIVITY = 2000;
@@ -35,6 +36,7 @@ export function defaultState(): DashboardState {
       ownerEmail: "",
       shippingAddress: "",
       productSource: null,
+      channels: [],
     },
     economics: { ...EMPTY_ECONOMICS },
     tasks: makeDefaultTasks(newId),
@@ -112,8 +114,10 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
     };
     s.tasks = raw.tasks
       // Built-in tasks from older versions that the setup assistant now covers are dropped unless they hold notes.
-      .filter((t) => t.custom || matchTemplate(t) || (t.notes ?? "").trim() !== "")
+      .filter((t) => t.custom || matchTemplate(t) || t.templateKey?.startsWith("channel:") || (t.notes ?? "").trim() !== "")
       .map((t) => {
+        const ch = t.templateKey?.startsWith("channel:") ? findChannel(t.templateKey.slice(8)) : undefined;
+        if (ch) return { ...t, ...channelTaskText(ch) };
         const tpl = matchTemplate(t);
         return {
           ...t,
@@ -147,6 +151,10 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
       }),
     };
   });
+  // Older saves only had free-text channels: recognise them, then make sure each has its setup step.
+  if (!Array.isArray(s.business.channels) || s.business.channels.length === 0) s.business.channels = detectChannels(s.business.salesChannels);
+  s.business.channels = s.business.channels.filter((k) => findChannel(k));
+  syncChannelTasks(s, newId);
   // Tick steps that are already satisfied by existing data (e.g. a deposit recorded before this step existed).
   autoCompleteTasks(s);
   return s;

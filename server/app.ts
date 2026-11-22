@@ -17,7 +17,7 @@ import type {
 } from "../shared/types.ts";
 import { createAgent, toView } from "./agents.ts";
 import { maskWebhook, type DiscordNotifier } from "./discord.ts";
-import { autofillAgent, resolveInputs } from "./inputs.ts";
+import { autofillAgent, refreshSuggestedInputs, resolveInputs } from "./inputs.ts";
 import { registerSetupRoutes } from "./setupRoutes.ts";
 import { anthropicResearch, type ResearchRunner } from "./research.ts";
 import { autoAllocate } from "./allocate.ts";
@@ -477,6 +477,7 @@ export function createApp(opts: AppOptions): express.Express {
   owner.put("/business", (req, res) => {
     const body = asBody(req.body);
     store.mutate((s) => {
+      const before = structuredClone(s);
       const b = s.business;
       b.name = str(body, "name", { max: 200 }) ?? b.name;
       b.product = str(body, "product", { max: 500 }) ?? b.product;
@@ -487,7 +488,7 @@ export function createApp(opts: AppOptions): express.Express {
       b.ownerEmail = str(body, "ownerEmail", { max: 200 }) ?? b.ownerEmail;
       b.shippingAddress = str(body, "shippingAddress", { max: 1000 }) ?? b.shippingAddress;
       if (body.product !== undefined && b.productSource === null) b.productSource = "manual";
-      for (const a of s.agents) autofillAgent(s, a);
+      refreshSuggestedInputs(before, s);
       log(s, "Owner", "info", "Updated the business profile.", now());
     });
     sendState(res);

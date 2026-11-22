@@ -1,3 +1,4 @@
+import { findChannel, type ChannelDef } from "./channels.ts";
 import type { ActionDef, DashboardState, InputField, MoneyKind, OwnerTask, TaskCategory, TaskLink } from "./types.ts";
 
 export interface AgentTemplate {
@@ -18,6 +19,9 @@ export interface AgentTemplate {
   /** Why it gets that share, shown next to the allocation. */
   budgetReason: string;
 }
+
+/** Store/marketplace credentials; the selected sales channels decide which one is used. */
+const STORE_KEYS = ["amazon_sp_api", "shopify_admin", "etsy_api", "ebay_api", "walmart_api"] as const;
 
 const llmKey: InputField = {
   key: "llm_api_key",
@@ -109,7 +113,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     inputFields: [
       llmKey,
       { key: "marketplace", label: "Sales channel(s)", kind: "text", required: true, suggest: "channels" },
-      { key: "marketplace_api_key", label: "Store / marketplace API credentials", kind: "secret", required: true, vault: ["amazon_sp_api", "shopify_admin"] },
+      { key: "marketplace_api_key", label: "Store / marketplace API credentials", kind: "secret", required: true, vault: [...STORE_KEYS] },
       { key: "min_price", label: "Lowest allowed sale price ($)", kind: "number", required: true, suggest: "min_price" },
       { key: "brand_voice", label: "Brand voice & claims to avoid", kind: "textarea", required: false, suggest: "brand_voice" },
     ],
@@ -135,7 +139,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     inputFields: [
       llmKey,
       { key: "ads_platform", label: "Ads platform(s)", kind: "text", required: true, suggest: "ads_platform" },
-      { key: "ads_api_key", label: "Ads API credentials", kind: "secret", required: true, vault: ["amazon_ads_api"] },
+      { key: "ads_api_key", label: "Ads API credentials", kind: "secret", required: true, vault: ["amazon_ads_api", "meta_ads"] },
       { key: "target_acos_pct", label: "Target ad cost of sale (%)", kind: "number", required: true, suggest: "acos" },
     ],
     actions: [
@@ -155,7 +159,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     responsibilities: ["Reply to buyer messages quickly", "Process returns and small refunds", "Escalate anything unusual to the owner"],
     inputFields: [
       llmKey,
-      { key: "support_channel_key", label: "Buyer messaging credentials", kind: "secret", required: true, vault: ["amazon_sp_api", "shopify_admin"] },
+      { key: "support_channel_key", label: "Buyer messaging credentials", kind: "secret", required: true, vault: [...STORE_KEYS] },
       { key: "return_policy", label: "Return & refund policy", kind: "textarea", required: true, suggest: "return_policy" },
       { key: "escalation_contact", label: "Escalation contact", kind: "text", required: true, suggest: "owner_contact" },
     ],
@@ -197,7 +201,7 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     inputFields: [
       llmKey,
       { key: "bookkeeping_api_key", label: "Bookkeeping API credentials", kind: "secret", required: true, vault: ["quickbooks"] },
-      { key: "sales_data_key", label: "Sales data credentials", kind: "secret", required: false, vault: ["amazon_sp_api", "shopify_admin"], help: "Lets it read payouts to report revenue." },
+      { key: "sales_data_key", label: "Sales data credentials", kind: "secret", required: false, vault: [...STORE_KEYS], help: "Lets it read payouts to report revenue." },
     ],
     actions: [
       { key: "categorize_transactions", label: "Categorize transactions", spends: false },
@@ -346,22 +350,6 @@ export const DEFAULT_TASKS: TaskTemplate[] = [
     time: "30 min",
   },
   {
-    key: "seller_accounts",
-    category: "sales",
-    title: "Create seller / store accounts",
-    description: "Identity verification has to be done by you. Afterwards, paste the API credentials on the Credentials page.",
-    steps: [
-      "Amazon: sign up for a Professional seller account (monthly fee) with your LLC, EIN, bank and ID.",
-      "Shopify (optional, own store): start a store and pick a plan.",
-      "Then open Credentials and follow the Amazon / Shopify instructions there.",
-    ],
-    links: [
-      { label: "Amazon: sell on Amazon", url: "https://sell.amazon.com" },
-      { label: "Shopify", url: "https://www.shopify.com" },
-    ],
-    time: "45 min + verification",
-  },
-  {
     key: "money_transfer",
     category: "money",
     money: "moves",
@@ -508,6 +496,44 @@ export function makeDefaultTasks(newId: () => string): OwnerTask[] {
     money: t.money ?? null,
     waitsFor: t.waitsFor ?? null,
   }));
+}
+
+/** The "open your account" checklist step for a selected sales channel. */
+export function makeChannelTask(def: ChannelDef, newId: () => string): OwnerTask {
+  return { id: newId(), status: "todo", notes: "", custom: false, completedAt: null, ...channelTaskText(def) };
+}
+
+export function channelTaskText(def: ChannelDef): Omit<OwnerTask, "id" | "status" | "notes" | "custom" | "completedAt"> {
+  const links: TaskLink[] = [
+    { label: `Sign up for ${def.name}`, url: def.signupUrl },
+    { label: `${def.name} fees`, url: def.feesUrl },
+  ];
+  if (def.key === "etsy") links.unshift({ label: "Etsy Creativity Standards", url: "https://www.etsy.com/legal/creativity" });
+  return {
+    title: `Open your ${def.name} ${def.type === "Your own store" ? "store" : "seller account"}`,
+    description: `${def.warning ? `${def.warning} ` : ""}${def.approvalNote} Connecting payouts is where customer money reaches your bank.`,
+    category: "sales",
+    steps: [...def.steps],
+    links,
+    time: def.time,
+    templateKey: `channel:${def.key}`,
+    money: "moves",
+    waitsFor: null,
+  };
+}
+
+/** Adds a step for each selected channel and removes untouched steps for channels no longer selected. */
+export function syncChannelTasks(s: DashboardState, newId: () => string): void {
+  const selected = new Set(s.business.channels);
+  s.tasks = s.tasks.filter((t) => {
+    if (!t.templateKey?.startsWith("channel:")) return true;
+    const key = t.templateKey.slice("channel:".length);
+    return selected.has(key) || t.status === "done" || t.notes.trim() !== "";
+  });
+  for (const key of s.business.channels) {
+    const def = findChannel(key);
+    if (def && !s.tasks.some((t) => t.templateKey === `channel:${key}`)) s.tasks.push(makeChannelTask(def, newId));
+  }
 }
 
 /** Tasks the dashboard can tick by itself, and the condition that marks them done. */

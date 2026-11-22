@@ -254,6 +254,9 @@ function UnitPlan({ state, dash, actual }: Pick<SectionProps, "state" | "dash"> 
         <Field label="Payment processing" help="0% on Amazon; card fees on your own store">
           <PercentInput value={e.paymentFeeBps} onChange={set("paymentFeeBps")} ariaLabel="Payment processing percent" />
         </Field>
+        <Field label="Per-order fees" help="Fixed fees per order, e.g. card fee 30¢, Etsy listing renewal">
+          <MoneyInput value={e.perOrderFeeCents} onChange={set("perOrderFeeCents")} ariaLabel="Per-order fees" />
+        </Field>
         <Field label="Ad spend (% of sales)">
           <PercentInput value={e.adSpendBps} onChange={set("adSpendBps")} ariaLabel="Ad spend percent" />
         </Field>
@@ -311,6 +314,7 @@ function UnitPlan({ state, dash, actual }: Pick<SectionProps, "state" | "dash"> 
                     ["Gross profit", u.grossProfit, "sub"],
                     ["Marketplace fee", -u.marketplaceFees, "indent"],
                     ["Payment fee", -u.paymentFees, "indent"],
+                    ["Per-order fees", -u.perOrderFees, "indent"],
                     ["Fulfillment", -u.fulfillment, "indent"],
                     ["Advertising", -u.advertising, "indent"],
                     ["Contribution (profit per unit)", u.contribution, "total"],

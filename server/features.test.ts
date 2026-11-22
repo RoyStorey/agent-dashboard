@@ -25,6 +25,7 @@ const ECON: UnitEconomics = {
   fulfillmentFeeCents: 400,
   marketplaceFeeBps: 1500,
   paymentFeeBps: 0,
+  perOrderFeeCents: 0,
   adSpendBps: 1500,
   returnRateBps: 500,
   fixedMonthlyCents: 20000,
@@ -599,5 +600,99 @@ describe("money setup checklist", () => {
       tasks: [],
     } as unknown as Partial<DashboardState> & Record<string, unknown>);
     assert.equal(withDeposit.tasks.find((t) => t.templateKey === "money_record")?.status, "done", "already-satisfied steps tick on upgrade");
+  });
+});
+
+describe("sales channels", () => {
+  it("includes per-order fees in profit and break-even price", () => {
+    const u = unitBreakdown({ ...ECON, perOrderFeeCents: 30 });
+    assert.equal(u.perOrderFees, 30);
+    assert.equal(u.contribution, 575 - 30);
+    assert.equal(u.breakEvenPrice, 1662);
+    assert.ok(unitBreakdown({ ...ECON, perOrderFeeCents: 30, salePriceCents: 1662 }).contribution >= 0);
+    assert.ok(unitBreakdown({ ...ECON, perOrderFeeCents: 30, salePriceCents: 1660 }).contribution < 0);
+  });
+
+  it("adds and removes the account steps as channels change", async () => {
+    const store = new Store(null);
+    const app = createApp({ store });
+    await request(app).put("/api/channels").set(json).send({ channels: ["nope"] }).expect(400);
+    await request(app).put("/api/channels").set(json).send({ channels: ["shopify", "shopify"] }).expect(400);
+    let st = (await request(app).put("/api/channels").set(json).send({ channels: ["shopify", "etsy"] }).expect(200)).body as StateResponse;
+    assert.equal(st.business.salesChannels, "Shopify, Etsy");
+    const keys = () => store.get().tasks.map((t) => t.templateKey).filter((k) => k?.startsWith("channel:"));
+    assert.deepEqual(keys(), ["channel:shopify", "channel:etsy"]);
+    const etsy = store.get().tasks.find((t) => t.templateKey === "channel:etsy")!;
+    assert.match(etsy.description, /make or design/);
+    assert.equal(etsy.money, "moves");
+    // Mark Shopify done, then drop both: the finished step is kept, the untouched one removed.
+    const shop = store.get().tasks.find((t) => t.templateKey === "channel:shopify")!;
+    await request(app).patch(`/api/tasks/${shop.id}`).set(json).send({ status: "done" }).expect(200);
+    st = (await request(app).put("/api/channels").set(json).send({ channels: ["ebay"] }).expect(200)).body as StateResponse;
+    assert.deepEqual(keys(), ["channel:shopify", "channel:ebay"]);
+    assert.ok(!store.get().tasks.some((t) => t.templateKey === "seller_accounts"), "the old generic seller-account step is gone");
+  });
+
+  it("uses the selected channel's credentials and suggestions", async () => {
+    const store = new Store(null);
+    const app = createApp({ store });
+    await request(app).post("/api/agents/recommended").set(json).send({ roles: ["storefront", "marketing", "inventory"] }).expect(200);
+    await request(app).put("/api/channels").set(json).send({ channels: ["amazon"] }).expect(200);
+    const agent = (role: string) => store.get().agents.find((a) => a.role === role)!;
+    assert.equal(agent("marketing").inputs.ads_platform, "Amazon Ads (Sponsored Products)");
+    assert.equal(agent("inventory").inputs.fulfillment_provider, "Amazon FBA");
+    // The owner types their own fulfillment choice; switching channels must not overwrite it.
+    await request(app).patch(`/api/agents/${agent("inventory").id}`).set(json).send({ inputs: { fulfillment_provider: "My garage" } }).expect(200);
+    let st = (await request(app).put("/api/channels").set(json).send({ channels: ["shopify"] }).expect(200)).body as StateResponse;
+    assert.equal(agent("marketing").inputs.ads_platform, "Meta Ads (Facebook & Instagram)");
+    assert.equal(agent("storefront").inputs.marketplace, "Shopify");
+    assert.equal(agent("inventory").inputs.fulfillment_provider, "My garage");
+    const r = st.readiness.find((x) => x.agentId === agent("storefront").id)!;
+    assert.ok(r.missingVaultKeys.includes("shopify_admin"));
+    assert.ok(!r.missingVaultKeys.includes("amazon_sp_api"));
+    // With both saved, the Shopify credential is the one used.
+    await request(app).put("/api/vault/amazon_sp_api").set(json).send({ value: "amazon-creds" }).expect(200);
+    await request(app).put("/api/vault/shopify_admin").set(json).send({ value: "shop.myshopify.com\nshpat_x" }).expect(200);
+    st = (await request(app).get("/api/state")).body as StateResponse;
+    const view = st.agents.find((a) => a.role === "storefront")!;
+    assert.deepEqual(view.inputSources.marketplace_api_key, { type: "vault", key: "shopify_admin" });
+  });
+
+  it("never uses credentials for a channel you don't sell on", async () => {
+    const store = new Store(null);
+    const app = createApp({ store });
+    await request(app).post("/api/agents/recommended").set(json).send({ roles: ["storefront", "marketing"] }).expect(200);
+    await request(app).put("/api/vault/amazon_sp_api").set(json).send({ value: "amazon-creds" }).expect(200);
+    await request(app).put("/api/vault/amazon_ads_api").set(json).send({ value: "amazon-ads" }).expect(200);
+    let st = (await request(app).put("/api/channels").set(json).send({ channels: ["shopify"] }).expect(200)).body as StateResponse;
+    const sf = () => st.agents.find((a) => a.role === "storefront")!;
+    const mk = () => st.agents.find((a) => a.role === "marketing")!;
+    assert.deepEqual(sf().inputSources.marketplace_api_key, { type: "none" }, "the Amazon key is not used for a Shopify store");
+    assert.deepEqual(mk().inputSources.ads_api_key, { type: "none" }, "Amazon Ads is not used when not selling on Amazon");
+    const missing = new Set(st.readiness.flatMap((r) => r.missingVaultKeys));
+    assert.ok(missing.has("shopify_admin") && missing.has("meta_ads"));
+    st = (await request(app).put("/api/channels").set(json).send({ channels: ["shopify", "amazon"] }).expect(200)).body as StateResponse;
+    assert.deepEqual(sf().inputSources.marketplace_api_key, { type: "vault", key: "amazon_sp_api" }, "used again once Amazon is selected");
+    // With nothing selected, any saved key may be used (older behaviour).
+    st = (await request(app).put("/api/channels").set(json).send({ channels: [] }).expect(200)).body as StateResponse;
+    assert.deepEqual(sf().inputSources.marketplace_api_key, { type: "vault", key: "amazon_sp_api" });
+  });
+
+  it("applies a channel's typical fees on request only", async () => {
+    const store = new Store(null);
+    const app = createApp({ store });
+    const st = (await request(app).post("/api/channels/shopify/apply-fees").set(json).send({}).expect(200)).body as StateResponse;
+    assert.equal(st.economics.marketplaceFeeBps, 0);
+    assert.equal(st.economics.paymentFeeBps, 290);
+    assert.equal(st.economics.perOrderFeeCents, 30);
+    await request(app).post("/api/channels/tiktok/apply-fees").set(json).send({}).expect(400);
+    await request(app).post("/api/channels/nope/apply-fees").set(json).send({}).expect(404);
+  });
+
+  it("recognises channels typed in older versions", () => {
+    const s = migrate({ business: { salesChannels: "Amazon US, own Shopify store" }, tasks: [] } as unknown as Partial<DashboardState> & Record<string, unknown>);
+    assert.deepEqual(s.business.channels, ["amazon", "shopify"]);
+    assert.ok(s.tasks.some((t) => t.templateKey === "channel:amazon"));
+    assert.ok(s.tasks.some((t) => t.templateKey === "channel:shopify"));
   });
 });

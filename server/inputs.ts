@@ -1,10 +1,14 @@
 import { unitBreakdown, bpsToInput, economicsComplete } from "../shared/economics.ts";
 import { centsToInput } from "../shared/money.ts";
+import { channelNames, detectChannels, findChannel, orderByChannels } from "../shared/channels.ts";
 import { llmVaultKey } from "../shared/services.ts";
 import type { Agent, DashboardState, InputField, InputSource, ProductIdea } from "../shared/types.ts";
 
-/** Vault keys a field can draw from, with "llm" resolved for the agent's provider. */
-export function fieldVaultKeys(agent: Pick<Agent, "connection">, field: InputField): string[] {
+/**
+ * Vault keys a field can draw from, with "llm" resolved for the agent's provider
+ * and the selected sales channels' keys tried first.
+ */
+export function fieldVaultKeys(agent: Pick<Agent, "connection">, field: InputField, channels: string[] = []): string[] {
   const out: string[] = [];
   for (const k of field.vault ?? []) {
     if (k === "llm") {
@@ -14,7 +18,7 @@ export function fieldVaultKeys(agent: Pick<Agent, "connection">, field: InputFie
       out.push(k);
     }
   }
-  return out;
+  return orderByChannels(out, channels);
 }
 
 export interface ResolvedInputs {
@@ -23,7 +27,8 @@ export interface ResolvedInputs {
 }
 
 /** Effective input values: a manual value wins; otherwise the first saved vault entry. */
-export function resolveInputs(state: Pick<DashboardState, "vault">, agent: Agent): ResolvedInputs {
+export function resolveInputs(state: Pick<DashboardState, "vault"> & { business?: { channels: string[] } }, agent: Agent): ResolvedInputs {
+  const channels = state.business?.channels ?? [];
   const values: Record<string, string> = {};
   const sources: Record<string, InputSource> = {};
   for (const f of agent.inputFields) {
@@ -33,7 +38,7 @@ export function resolveInputs(state: Pick<DashboardState, "vault">, agent: Agent
       sources[f.key] = { type: "manual" };
       continue;
     }
-    const key = fieldVaultKeys(agent, f).find((k) => (state.vault[k]?.value ?? "").trim() !== "");
+    const key = fieldVaultKeys(agent, f, channels).find((k) => (state.vault[k]?.value ?? "").trim() !== "");
     if (key) {
       values[f.key] = state.vault[key]!.value;
       sources[f.key] = { type: "vault", key };
@@ -45,18 +50,18 @@ export function resolveInputs(state: Pick<DashboardState, "vault">, agent: Agent
   return { values, sources };
 }
 
-export function missingInputs(state: Pick<DashboardState, "vault">, agent: Agent): string[] {
+export function missingInputs(state: Pick<DashboardState, "vault"> & { business?: { channels: string[] } }, agent: Agent): string[] {
   const { values } = resolveInputs(state, agent);
   return agent.inputFields.filter((f) => f.required && (values[f.key] ?? "").trim() === "").map((f) => f.label);
 }
 
 /** Vault keys that would fill this agent's missing required inputs (first choice per field). */
-export function missingVaultKeys(state: Pick<DashboardState, "vault">, agent: Agent): string[] {
+export function missingVaultKeys(state: Pick<DashboardState, "vault"> & { business?: { channels: string[] } }, agent: Agent): string[] {
   const { values } = resolveInputs(state, agent);
   const keys = new Set<string>();
   for (const f of agent.inputFields) {
     if (!f.required || (values[f.key] ?? "").trim() !== "") continue;
-    const first = fieldVaultKeys(agent, f)[0];
+    const first = fieldVaultKeys(agent, f, state.business?.channels ?? [])[0];
     if (first) keys.add(first);
   }
   return [...keys];
@@ -73,14 +78,13 @@ export function chosenIdea(state: DashboardState): ProductIdea | null {
 export const DEFAULT_RETURN_POLICY =
   "30-day returns for unused items in original packaging. Refund to the original payment method within 3 business days of receiving the return. Defective or damaged items: full refund or free replacement, no return shipping charge. Escalate anything else to the owner.";
 
-const has = (text: string, word: string) => text.toLowerCase().includes(word);
-
 /** A suggested value for a field's `suggest` name, or "" when there is no good default. */
 export function suggestValue(state: DashboardState, name: string): string {
   const b = state.business;
   const e = state.economics;
   const idea = chosenIdea(state);
-  const channels = b.salesChannels || idea?.salesChannels || "";
+  const channels = channelNames(b.channels) || b.salesChannels || idea?.salesChannels || "";
+  const primary = findChannel(b.channels[0] ?? "") ?? findChannel(detectChannels(channels)[0] ?? "");
   switch (name) {
     case "business_goals": {
       if (economicsComplete(e) && e.monthlyUnits > 0) {
@@ -110,9 +114,7 @@ export function suggestValue(state: DashboardState, name: string): string {
     case "brand_voice":
       return "Plain, factual and friendly. Never claim certifications, awards or results the product does not have. No exaggerated health or safety claims.";
     case "ads_platform":
-      if (has(channels, "amazon")) return "Amazon Ads (Sponsored Products)";
-      if (has(channels, "shopify") || has(channels, "own store")) return "Meta Ads and Google Ads";
-      return "";
+      return primary?.adsPlatform ?? "";
     case "acos":
       return e.adSpendBps > 0 ? bpsToInput(e.adSpendBps) : "25";
     case "return_policy":
@@ -120,9 +122,7 @@ export function suggestValue(state: DashboardState, name: string): string {
     case "owner_contact":
       return b.ownerEmail;
     case "fulfillment":
-      if (has(channels, "amazon")) return "Amazon FBA";
-      if (has(channels, "shopify")) return "ShipBob (3PL)";
-      return "";
+      return primary?.fulfillment ?? "";
     case "reorder_point":
       // Daily sales × (30-day lead time + 14 days safety stock).
       return e.monthlyUnits > 0 ? String(Math.ceil((e.monthlyUnits * 44) / 30)) : "";
@@ -153,5 +153,27 @@ export function autofillAgent(state: DashboardState, agent: Agent): string[] {
 export function autofillAll(state: DashboardState): number {
   let n = 0;
   for (const a of state.agents) n += autofillAgent(state, a).length;
+  return n;
+}
+
+/**
+ * After the plan changes (channels, product, prices), updates auto-filled
+ * details that still hold the old suggestion. Values the owner typed are kept.
+ */
+export function refreshSuggestedInputs(before: DashboardState, after: DashboardState): number {
+  let n = 0;
+  for (const a of after.agents) {
+    for (const f of a.inputFields) {
+      if (!f.suggest || f.kind === "secret") continue;
+      const current = a.inputs[f.key] ?? "";
+      const old = suggestValue(before, f.suggest);
+      if (current.trim() !== "" && current !== old) continue;
+      const next = suggestValue(after, f.suggest);
+      if (next.trim() !== "" && next !== current) {
+        a.inputs[f.key] = next;
+        n++;
+      }
+    }
+  }
   return n;
 }
