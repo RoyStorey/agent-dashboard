@@ -626,11 +626,18 @@ describe("sales channels", () => {
     const etsy = store.get().tasks.find((t) => t.templateKey === "channel:etsy")!;
     assert.match(etsy.description, /make or design/);
     assert.equal(etsy.money, "moves");
-    // Mark Shopify done, then drop both: the finished step is kept, the untouched one removed.
+    // Mark Shopify done and write a note on Etsy, then switch to eBay only:
+    // the checklist follows the choice immediately; only the step with notes is kept.
     const shop = store.get().tasks.find((t) => t.templateKey === "channel:shopify")!;
     await request(app).patch(`/api/tasks/${shop.id}`).set(json).send({ status: "done" }).expect(200);
+    await request(app).patch(`/api/tasks/${etsy.id}`).set(json).send({ notes: "Shop name reserved" }).expect(200);
     st = (await request(app).put("/api/channels").set(json).send({ channels: ["ebay"] }).expect(200)).body as StateResponse;
-    assert.deepEqual(keys(), ["channel:shopify", "channel:ebay"]);
+    assert.deepEqual(keys(), ["channel:etsy", "channel:ebay"]);
+    assert.deepEqual(
+      st.tasks.filter((t) => t.templateKey?.startsWith("channel:")).map((t) => t.templateKey),
+      ["channel:etsy", "channel:ebay"],
+      "the response already has the updated checklist",
+    );
     assert.ok(!store.get().tasks.some((t) => t.templateKey === "seller_accounts"), "the old generic seller-account step is gone");
   });
 

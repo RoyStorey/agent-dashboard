@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { OwnerAction, OwnerTask, SectionKey, TaskCategory } from "../../../shared/types.ts";
 import type { SectionProps } from "../App.tsx";
+import { ChannelChips } from "./Channels.tsx";
 import { api } from "../api.ts";
 import { Badge, Card, EmptyState, ExtLink, Field, MoneyBadge, MoneyLegend, PageHeader, ProgressBar } from "../components/ui.tsx";
 
@@ -131,6 +132,11 @@ export function Todo({ state, dash, go }: SectionProps) {
         title="Things you need to do"
         subtitle="Everything the business needs from you, in order. Agents run the rest. Each legal or account step has exact instructions and a direct link."
       />
+
+      <Card title="Where you sell">
+        <p className="muted">Switch channels here and the account steps below change straight away.</p>
+        <ChannelChips state={state} dash={dash} go={go} />
+      </Card>
 
       <Card title="Right now">
         {actions.length === 0 ? (

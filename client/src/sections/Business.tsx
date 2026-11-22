@@ -44,7 +44,7 @@ export function Business(props: SectionProps) {
 }
 
 function ProfileForm({ state, dash }: Pick<SectionProps, "state" | "dash">) {
-  const pick = (b: BusinessProfile) => ({ name: b.name, product: b.product, description: b.description, targetMarket: b.targetMarket, salesChannels: b.salesChannels });
+  const pick = (b: BusinessProfile) => ({ name: b.name, product: b.product, description: b.description, targetMarket: b.targetMarket });
   const saved = pick(state.business);
   const savedKey = JSON.stringify(saved);
   const [draft, setDraft] = useState(saved);
@@ -82,8 +82,8 @@ function ProfileForm({ state, dash }: Pick<SectionProps, "state" | "dash">) {
           <Field label="Target customers" htmlFor="b-market">
             <textarea id="b-market" value={draft.targetMarket} onChange={set("targetMarket")} placeholder="e.g. Home-office and gaming setups in the US" />
           </Field>
-          <Field label="Sales channels" htmlFor="b-channels" help="Set by “Where will you sell?” above; edit to add detail.">
-            <textarea id="b-channels" value={draft.salesChannels} onChange={set("salesChannels")} placeholder="e.g. Amazon US, own Shopify store" />
+          <Field label="Sales channels" help="Change these with “Where will you sell?” above; the checklist and agents follow it.">
+            <div className="token-box">{channelNames(state.business.channels) || "None chosen yet"}</div>
           </Field>
         </div>
         <div className="form-actions">

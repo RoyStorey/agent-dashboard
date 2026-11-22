@@ -69,6 +69,11 @@ function Allocation({ state, dash }: Pick<SectionProps, "state" | "dash">) {
   const rebalance = planRebalance({ agents: state.agents, settings, cashBalanceCents: f.cashBalanceCents, finance: f.agents });
   const distribute = planAllocation({ agents: state.agents, settings, availableCents: f.unallocatedCents, cashBalanceCents: f.cashBalanceCents });
   const dirty = reserve !== a.reserveBps || Object.keys(weights).length > 0;
+  const saveShares = () =>
+    api.updateAllocation({
+      reserveBps: reserve,
+      weights: Object.fromEntries(Object.keys(weights).map((id) => [id, draftWeights[id] ?? null])),
+    });
   const toDistribute = distribute.lines.reduce((s, l) => s + l.addCents, 0);
   const rebalanceChanges = rebalance.lines.filter((l) => l.deltaCents !== 0).length;
 
@@ -150,32 +155,43 @@ function Allocation({ state, dash }: Pick<SectionProps, "state" | "dash">) {
       </div>
       <div className="form-actions">
         {dirty && (
-          <button
-            className="btn"
-            onClick={() =>
-              void dash.run(
-                () =>
-                  api.updateAllocation({
-                    reserveBps: reserve,
-                    weights: Object.fromEntries(Object.keys(weights).map((id) => [id, draftWeights[id] ?? null])),
-                  }),
-                "Shares saved.",
-              )
-            }
-          >
+          <button className="btn" onClick={() => void dash.run(saveShares, "Shares saved.")}>
             Save shares
           </button>
         )}
-        <button className="btn" disabled={toDistribute === 0} onClick={() => void dash.run(() => api.distribute(), `Distributed ${formatCents(toDistribute)}.`)}>
+        <button
+          className="btn"
+          onClick={() => {
+            if (toDistribute === 0) {
+              dash.notify("success", "Nothing to distribute: all cash above the reserve is already in budgets.");
+              if (dirty) void dash.run(saveShares, "Shares saved.");
+              return;
+            }
+            void dash.run(async () => {
+              if (dirty) await saveShares();
+              return api.distribute();
+            }, `Distributed ${formatCents(toDistribute)}.`);
+          }}
+        >
           Distribute unallocated ({formatCents(toDistribute)})
         </button>
         <button
           className="btn btn-primary"
-          disabled={rebalanceChanges === 0 || dirty}
-          title={dirty ? "Save shares first" : ""}
-          onClick={() => void dash.run(() => api.rebalance(), "Budgets rebalanced.")}
+          title="Saves any changed shares or reserve, then re-splits all unspent money to match them"
+          onClick={() => {
+            // The preview above already uses your unsaved shares, so it shows exactly what will happen.
+            if (rebalanceChanges === 0) {
+              dash.notify("success", "Budgets already match your shares, so there's nothing to change.");
+              if (dirty) void dash.run(saveShares, "Shares saved.");
+              return;
+            }
+            void dash.run(async () => {
+              if (dirty) await saveShares();
+              return api.rebalance();
+            }, `Budgets rebalanced (${rebalanceChanges} changed).`);
+          }}
         >
-          Rebalance all budgets
+          {dirty ? "Save & rebalance all budgets" : "Rebalance all budgets"}
         </button>
       </div>
     </Card>

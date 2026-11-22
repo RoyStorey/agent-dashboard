@@ -536,13 +536,17 @@ export function channelTaskText(def: ChannelDef): Omit<OwnerTask, "id" | "status
   };
 }
 
-/** Adds a step for each selected channel and removes untouched steps for channels no longer selected. */
+/**
+ * Adds a step for each selected channel and removes the steps of channels
+ * you no longer sell on, so the checklist always matches your choice. A step
+ * you wrote notes on is kept, so your notes are never lost.
+ */
 export function syncChannelTasks(s: DashboardState, newId: () => string): void {
   const selected = new Set(s.business.channels);
   s.tasks = s.tasks.filter((t) => {
     if (!t.templateKey?.startsWith("channel:")) return true;
     const key = t.templateKey.slice("channel:".length);
-    return selected.has(key) || t.status === "done" || t.notes.trim() !== "";
+    return selected.has(key) || t.notes.trim() !== "";
   });
   for (const key of s.business.channels) {
     const def = findChannel(key);

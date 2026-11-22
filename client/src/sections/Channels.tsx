@@ -21,6 +21,38 @@ function commission(def: ChannelDef): string {
   return parts.length ? parts.join(" + ") : "None";
 }
 
+/** Compact on/off switches for where you sell, for pages other than Business & product. */
+export function ChannelChips({ state, dash, go }: Pick<SectionProps, "state" | "dash" | "go">) {
+  const selected = state.business.channels;
+  return (
+    <div className="row" role="group" aria-label="Where you sell">
+      {CHANNELS.map((c) => {
+        const on = selected.includes(c.key);
+        return (
+          <button
+            key={c.key}
+            className={`btn btn-sm ${on ? "btn-primary" : ""}`}
+            aria-pressed={on}
+            title={on ? `Stop selling on ${c.name}` : `Sell on ${c.name}`}
+            onClick={() =>
+              void dash.run(
+                () => api.updateChannels(on ? selected.filter((k) => k !== c.key) : [...selected, c.key]),
+                on ? `Removed ${c.name}; its steps are gone from the checklist.` : `Added ${c.name}; its account step is on the checklist.`,
+              )
+            }
+          >
+            {on ? "✓ " : "+ "}
+            {c.name}
+          </button>
+        );
+      })}
+      <button className="btn btn-sm" onClick={() => go("business")}>
+        Compare channels
+      </button>
+    </div>
+  );
+}
+
 export function ChannelChooser({ state, dash, go }: SectionProps) {
   const selected = state.business.channels;
   const save = (next: string[], msg: string) => void dash.run(() => api.updateChannels(next), msg);
