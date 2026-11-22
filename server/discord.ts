@@ -145,6 +145,12 @@ export function summaryPayload(state: DashboardState, now: Date): DiscordPayload
           { name: "Ad spend (month)", value: `${formatCents(m.advertising)} · TACoS ${formatBps(m.tacosBps)}`, inline: true },
           { name: "Agents active", value: `${active} of ${state.agents.length}`, inline: true },
           { name: "Waiting for approval", value: String(pending), inline: true },
+          ...(state.business.fulfillmentMode === "self"
+            ? [
+                { name: "Orders to pack", value: String(state.shipments.filter((s) => s.status === "to_pack").length), inline: true },
+                { name: "Packed, not dropped off", value: String(state.shipments.filter((s) => s.status === "packed").length), inline: true },
+              ]
+            : []),
           { name: "Kill switch", value: state.guardrails.killSwitch ? "ON" : "off", inline: true },
         ],
       },

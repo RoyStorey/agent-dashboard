@@ -4,7 +4,7 @@ import path from "node:path";
 import { EMPTY_ECONOMICS } from "../shared/economics.ts";
 import { detectChannels, findChannel } from "../shared/channels.ts";
 import { AUTO_DONE, DEFAULT_TASKS, channelTaskText, findTemplate, makeDefaultTasks, syncChannelTasks } from "../shared/templates.ts";
-import type { ActivityEntry, ActivityLevel, DashboardState, DiscordSettings } from "../shared/types.ts";
+import type { ActionDef, ActivityEntry, ActivityLevel, Agent, DashboardState, DiscordSettings } from "../shared/types.ts";
 
 export const MAX_ACTIVITY = 2000;
 /** AI usage reports kept (older ones are dropped; monthly totals only need recent ones). */
@@ -39,6 +39,7 @@ export function defaultState(): DashboardState {
       shippingAddress: "",
       productSource: null,
       channels: [],
+      fulfillmentMode: null,
     },
     economics: { ...EMPTY_ECONOMICS },
     tasks: makeDefaultTasks(newId),
@@ -60,6 +61,8 @@ export function defaultState(): DashboardState {
     research: [],
     aiUsage: [],
     security: { passwordHash: null, passwordSalt: null, passwordUpdatedAt: null },
+    shipments: [],
+    supplies: [],
   };
 }
 
@@ -72,6 +75,14 @@ export function autoCompleteTasks(s: DashboardState, now: Date = new Date()): vo
       t.completedAt = now.toISOString();
     }
   }
+}
+
+/** Actions introduced after agents started remembering what they'd been offered. */
+const ACTIONS_ADDED_LATER = ["order_supplies"];
+
+function newTemplateActions(a: Agent, tpl: NonNullable<ReturnType<typeof findTemplate>>): ActionDef[] {
+  const seen = new Set(a.seenTemplateActions ?? tpl.actions.map((x) => x.key).filter((k) => !ACTIONS_ADDED_LATER.includes(k)));
+  return tpl.actions.filter((ta) => !seen.has(ta.key) && !a.actions.some((x) => x.key === ta.key));
 }
 
 /** Built-in task titles from version 1, mapped to today's task keys. */
@@ -104,6 +115,8 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
     allocation: { ...base.allocation, ...raw.allocation, weights: { ...raw.allocation?.weights } },
     vault: { ...raw.vault },
     aiUsage: Array.isArray(raw.aiUsage) ? raw.aiUsage : [],
+    shipments: Array.isArray(raw.shipments) ? raw.shipments : [],
+    supplies: Array.isArray(raw.supplies) ? raw.supplies : [],
     security: { ...base.security, ...raw.security },
     // A research job cannot survive a restart: mark any that were running as failed.
     research: (raw.research ?? []).map((j) =>
@@ -150,9 +163,20 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
       ...a,
       inputFields: a.inputFields.map((f) => {
         const tf = tpl.inputFields.find((x) => x.key === f.key);
-        return tf ? { ...f, vault: tf.vault, suggest: tf.suggest, help: tf.help ?? f.help } : f;
+        return tf ? { ...f, vault: tf.vault, suggest: tf.suggest, help: tf.help ?? f.help, notNeededWhenSelfShipping: tf.notNeededWhenSelfShipping } : f;
       }),
-      actions: a.actions.map((x) => {
+      // Template actions added in a newer version are offered once; ones that need approval keep needing it.
+      // Anything the owner removed stays removed, because it's remembered as already offered.
+      seenTemplateActions: tpl.actions.map((ta) => ta.key),
+      guardrails: (() => {
+        const added = newTemplateActions(a, tpl);
+        return {
+          ...a.guardrails,
+          allowedActions: [...a.guardrails.allowedActions, ...added.map((m) => m.key)],
+          approvalRequiredActions: [...a.guardrails.approvalRequiredActions, ...added.filter((m) => m.approvalByDefault).map((m) => m.key)],
+        };
+      })(),
+      actions: [...a.actions, ...structuredClone(newTemplateActions(a, tpl))].map((x) => {
         const ta = tpl.actions.find((y) => y.key === x.key);
         if (!ta) return x;
         return { ...x, ...(ta.category && !x.category ? { category: ta.category } : {}), ...(ta.setsPrice ? { setsPrice: true } : {}) };

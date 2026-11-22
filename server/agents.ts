@@ -28,6 +28,7 @@ export function createAgent(role: string, name: string | undefined, now: Date): 
     createdAt: now.toISOString(),
     lastSeenAt: null,
     lastStatusMessage: null,
+    seenTemplateActions: t ? t.actions.map((a) => a.key) : [],
   };
   return base;
 }

@@ -19,6 +19,8 @@ import { createAgent, toView } from "./agents.ts";
 import { maskWebhook, type DiscordNotifier } from "./discord.ts";
 import { autofillAgent, refreshSuggestedInputs, resolveInputs } from "./inputs.ts";
 import { registerSetupRoutes } from "./setupRoutes.ts";
+import { logQueued, parseShipment } from "./shippingInput.ts";
+import { lowSupplies } from "../shared/shipping.ts";
 import { LoginLimiter, Sessions, clearedCookie, hashPassword, readCookie, sessionCookie, SESSION_COOKIE, verifyPassword } from "./auth.ts";
 import { aiThisMonth } from "./finance.ts";
 import { estimateCostCents } from "../shared/aiPricing.ts";
@@ -206,6 +208,12 @@ export function createApp(opts: AppOptions): express.Express {
       inputs: resolveInputs(state, agent).values,
       inputFields: agent.inputFields.map((f) => ({ key: f.key, label: f.label, kind: f.kind, required: f.required })),
       missingInputs: missingInputs(state, agent),
+      fulfillment: {
+        mode: state.business.fulfillmentMode,
+        supplies: state.supplies,
+        lowSupplies: lowSupplies(state.supplies),
+        toPackCount: state.shipments.filter((sh) => sh.status === "to_pack").length,
+      },
       reporting: { discord: state.discord.enabled && Boolean(state.discord.agentWebhooks[agent.id] || state.discord.defaultWebhookUrl) },
       actions: agent.actions.map((a) => ({
         ...a,
@@ -423,6 +431,49 @@ export function createApp(opts: AppOptions): express.Express {
     res.status(201).json(result);
   });
 
+  agentApi.get("/shipments", (req, res) => {
+    const state = store.get();
+    currentAgent(state, res);
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    res.json({ shipments: state.shipments.filter((sh) => !status || sh.status === status) });
+  });
+
+  agentApi.post("/shipments", (req, res) => {
+    const body = asBody(req.body);
+    const shipment = store.mutate((s) => {
+      const agent = currentAgent(s, res);
+      const t = now();
+      touch(agent, t);
+      if (s.guardrails.killSwitch) throw new HttpError(403, "Kill switch is on: all agent activity is stopped.");
+      const sh = parseShipment(s, body, agent.name, t);
+      if (sh.orderRef && s.shipments.some((x) => x.orderRef === sh.orderRef && x.status !== "cancelled")) {
+        throw new HttpError(409, `Order ${sh.orderRef} is already in the packing queue.`);
+      }
+      s.shipments.push(sh);
+      logQueued(s, sh, agent.name, t);
+      return sh;
+    });
+    res.status(201).json({ shipment });
+  });
+
+  agentApi.post("/supplies/:id/adjust", (req, res) => {
+    const body = asBody(req.body);
+    const delta = body.delta;
+    if (typeof delta !== "number" || !Number.isSafeInteger(delta) || delta === 0 || Math.abs(delta) > 1_000_000) throw bad('"delta" must be a non-zero whole number.');
+    const note = str(body, "note", { max: 500 }) ?? "";
+    const supply = store.mutate((s) => {
+      const agent = currentAgent(s, res);
+      const item = s.supplies.find((x) => x.id === req.params.id);
+      if (!item) throw new HttpError(404, "Stock item not found.");
+      const t = now();
+      touch(agent, t);
+      item.onHand += delta;
+      log(s, agent.name, "info", `${delta > 0 ? "Added" : "Removed"} ${Math.abs(delta)} ${item.unit} of ${item.name} (now ${item.onHand}). ${note}`.trim(), t, { kind: "log", agentId: agent.id });
+      return item;
+    });
+    res.json({ supply });
+  });
+
   agentApi.post("/report", (req, res) => {
     const body = asBody(req.body);
     const title = str(body, "title", { max: 200, required: true }) as string;
@@ -588,6 +639,11 @@ export function createApp(opts: AppOptions): express.Express {
       research: s.research,
       aiUsage: s.aiUsage.slice(-300).reverse(),
       aiUsageDaily: dailyAiTotals(s),
+      shipments: [
+        ...s.shipments.filter((sh) => sh.status === "to_pack" || sh.status === "packed"),
+        ...s.shipments.filter((sh) => sh.status === "shipped" || sh.status === "cancelled").slice(-50),
+      ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+      supplies: s.supplies,
       security: { passwordSet: Boolean(s.security.passwordHash) },
       guardrails: s.guardrails,
       funding: [...s.funding].reverse(),

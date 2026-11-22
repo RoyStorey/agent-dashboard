@@ -809,3 +809,115 @@ describe("security safeguards", () => {
     assert.ok(!JSON.stringify(st.body).includes(store.get().security.passwordHash!), "the hash isn't sent either");
   });
 });
+
+describe("shipping orders yourself", () => {
+  async function selfShipping() {
+    const store = new Store(null);
+    const sent: DiscordPayload[] = [];
+    const notifier = new DiscordNotifier(store, async (_u, b) => {
+      sent.push(b);
+      return { status: 204 };
+    });
+    notifier.attach();
+    const app = createApp({ store, notifier });
+    await request(app).put("/api/business").set(json).send({ product: "Braided cord" }).expect(200);
+    await request(app).put("/api/discord").set(json).send({ defaultWebhookUrl: HOOK, enabled: true }).expect(200);
+    await request(app).post("/api/agents/recommended").set(json).send({ roles: ["inventory"] }).expect(200);
+    const st = (await request(app).put("/api/fulfillment").set(json).send({ mode: "self" }).expect(200)).body as StateResponse;
+    const inv = store.get().agents[0]!;
+    const token = (await request(app).post(`/api/agents/${inv.id}/token`).set(json).send({})).body.token as string;
+    return { app, store, st, sent, auth: { Authorization: `Bearer ${token}` } };
+  }
+
+  it("doesn't require a fulfillment company's key when you ship yourself", async () => {
+    const { app, st, store } = await selfShipping();
+    const inv = st.agents[0]!;
+    const r = st.readiness.find((x) => x.agentId === inv.id)!;
+    assert.ok(!r.missingVaultKeys.includes("shipbob") && !r.missingVaultKeys.includes("amazon_sp_api"));
+    assert.ok(!r.missingInputs.includes("Fulfillment API credentials"));
+    assert.match(store.get().agents[0]!.inputs.fulfillment_provider ?? "", /Ship it myself/);
+    // Switching to a fulfillment company makes the key required again.
+    const st2 = (await request(app).put("/api/fulfillment").set(json).send({ mode: "provider" }).expect(200)).body as StateResponse;
+    assert.ok(st2.readiness[0]!.missingInputs.includes("Fulfillment API credentials"));
+  });
+
+  it("seeds stock at home and offers the supply-ordering action", async () => {
+    const { st, store } = await selfShipping();
+    assert.equal(st.supplies.length, 4);
+    assert.equal(st.supplies[0]!.kind, "product");
+    assert.equal(st.supplies[0]!.name, "Braided cord");
+    const inv = store.get().agents[0]!;
+    assert.ok(inv.actions.some((a) => a.key === "order_supplies"));
+    assert.ok(inv.guardrails.approvalRequiredActions.includes("order_supplies"), "buying supplies needs approval");
+  });
+
+  it("queues orders, keeps the address off Discord, and updates stock when shipped", async () => {
+    const { app, store, sent, auth } = await selfShipping();
+    const [product, mailers, labels] = store.get().supplies;
+    await request(app)
+      .put("/api/supplies")
+      .set(json)
+      .send({ supplies: store.get().supplies.map((s) => ({ ...s, onHand: s.kind === "product" ? 20 : 30 })) })
+      .expect(200);
+    const order = {
+      orderRef: "#1001",
+      recipientName: "Pat Doe",
+      address: "12 Elm St\nSpringfield, IL 62701",
+      items: [{ name: "Braided cord", qty: 2, supplyId: product!.id }],
+      packaging: "Poly mailer 10×13",
+      packagingSupplyId: mailers!.id,
+      service: "USPS Ground Advantage",
+    };
+    await request(app).post("/api/agent/v1/shipments").set(auth).send({ ...order, items: [] }).expect(400);
+    await request(app).post("/api/agent/v1/shipments").set(auth).send({ ...order, packagingSupplyId: "nope" }).expect(400);
+    const created = (await request(app).post("/api/agent/v1/shipments").set(auth).send(order).expect(201)).body.shipment;
+    await request(app).post("/api/agent/v1/shipments").set(auth).send(order).expect(409); // no duplicates
+    await new Promise((r) => setTimeout(r, 10));
+    const msg = sent.find((b) => b.embeds?.[0]?.title === "New order to pack");
+    assert.ok(msg, "posted to Discord");
+    assert.ok(!JSON.stringify(msg).includes("Elm St"), "the customer's address never goes to Discord");
+
+    let st = (await request(app).get("/api/state")).body as StateResponse;
+    assert.ok(st.ownerActions.some((a) => a.id === "to-pack"));
+
+    await request(app).patch(`/api/shipments/${created.id}`).set(json).send({ status: "packed" }).expect(200);
+    st = (await request(app).patch(`/api/shipments/${created.id}`).set(json).send({ status: "shipped", trackingNumber: "9400 1000" }).expect(200)).body;
+    const on = (id: string) => st.supplies.find((s) => s.id === id)!.onHand;
+    assert.equal(on(product!.id), 18);
+    assert.equal(on(mailers!.id), 29);
+    assert.equal(on(labels!.id), 29, "one label per package");
+    assert.equal(st.shipments.find((s) => s.id === created.id)!.trackingNumber, "9400 1000");
+    // Undo puts stock back.
+    st = (await request(app).patch(`/api/shipments/${created.id}`).set(json).send({ status: "packed" }).expect(200)).body;
+    assert.equal(on(product!.id), 20);
+    assert.equal(on(labels!.id), 30);
+  });
+
+  it("flags low stock and lets agents record deliveries", async () => {
+    const { app, store, auth } = await selfShipping();
+    let st = (await request(app).get("/api/state")).body as StateResponse;
+    assert.ok(st.ownerActions.some((a) => a.id.startsWith("low-")), "everything starts at 0, so it's all low");
+    const tape = store.get().supplies.find((s) => s.name === "Packing tape")!;
+    await request(app).post(`/api/agent/v1/supplies/${tape.id}/adjust`).set(auth).send({ delta: 6, note: "Delivered" }).expect(200);
+    st = (await request(app).get("/api/state")).body as StateResponse;
+    assert.ok(!st.ownerActions.some((a) => a.id === `low-${tape.id}`));
+    const cfg = (await request(app).get("/api/agent/v1/config").set(auth)).body;
+    assert.equal(cfg.fulfillment.mode, "self");
+    assert.ok(cfg.fulfillment.lowSupplies.length >= 1);
+  });
+
+  it("upgrading adds the new action once, and never re-adds one you removed", () => {
+    const old = createAgent("inventory", undefined, NOW);
+    delete old.seenTemplateActions;
+    old.actions = old.actions.filter((a) => a.key !== "order_supplies" && a.key !== "create_shipment");
+    old.guardrails.allowedActions = old.actions.map((a) => a.key);
+    const s1 = migrate({ agents: [old] } as unknown as Partial<DashboardState> & Record<string, unknown>);
+    const a1 = s1.agents[0]!;
+    assert.ok(a1.actions.some((a) => a.key === "order_supplies"), "new action offered");
+    assert.ok(!a1.actions.some((a) => a.key === "create_shipment"), "an action the owner removed stays removed");
+    // Owner then removes order_supplies; another upgrade must not bring it back.
+    a1.actions = a1.actions.filter((a) => a.key !== "order_supplies");
+    const s2 = migrate({ agents: [a1] } as unknown as Partial<DashboardState> & Record<string, unknown>);
+    assert.ok(!s2.agents[0]!.actions.some((a) => a.key === "order_supplies"));
+  });
+});

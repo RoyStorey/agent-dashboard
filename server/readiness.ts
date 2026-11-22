@@ -2,7 +2,8 @@ import { economicsComplete } from "../shared/economics.ts";
 import { formatCents } from "../shared/money.ts";
 import { findService } from "../shared/services.ts";
 import type { Agent, AgentReadiness, DashboardState, FinanceSummary, OwnerAction } from "../shared/types.ts";
-import { missingInputs, missingVaultKeys, resolveInputs, fieldVaultKeys } from "./inputs.ts";
+import { missingInputs, missingVaultKeys, requiredNow, resolveInputs, fieldVaultKeys } from "./inputs.ts";
+import { lowSupplies } from "../shared/shipping.ts";
 
 export { missingInputs };
 
@@ -31,7 +32,7 @@ export function computeReadiness(state: DashboardState, finance: FinanceSummary)
 function manualMissing(state: DashboardState, agent: Agent): string[] {
   const { values } = resolveInputs(state, agent);
   return agent.inputFields
-    .filter((f) => f.required && (values[f.key] ?? "").trim() === "" && fieldVaultKeys(agent, f, state.business.channels).length === 0)
+    .filter((f) => requiredNow(state, f) && (values[f.key] ?? "").trim() === "" && fieldVaultKeys(agent, f, state.business.channels).length === 0)
     .map((f) => f.label);
 }
 
@@ -163,6 +164,47 @@ export function computeOwnerActions(state: DashboardState, finance: FinanceSumma
       title: `${readyDrafts.length} agent${readyDrafts.length === 1 ? " is" : "s are"} ready to activate`,
       detail: readyDrafts.map((a) => a.name).join(", "),
       section: "setup",
+    });
+  }
+
+  const toPack = state.shipments.filter((s) => s.status === "to_pack").length;
+  const packed = state.shipments.filter((s) => s.status === "packed").length;
+  if (toPack > 0) {
+    out.push({
+      id: "to-pack",
+      severity: "warning",
+      title: `${toPack} order${toPack === 1 ? "" : "s"} to pack and ship`,
+      detail: "The Pack & ship page lists exactly what goes in each box and where it goes.",
+      section: "shipping",
+    });
+  }
+  if (packed > 0) {
+    out.push({
+      id: "to-drop-off",
+      severity: "info",
+      title: `${packed} packed order${packed === 1 ? "" : "s"} waiting for drop-off`,
+      detail: "Mark them shipped (with tracking) after drop-off.",
+      section: "shipping",
+    });
+  }
+  if (state.business.fulfillmentMode === "self") {
+    for (const s of lowSupplies(state.supplies)) {
+      out.push({
+        id: `low-${s.id}`,
+        severity: "warning",
+        title: `Running low: ${s.name}`,
+        detail: `${s.onHand} ${s.unit} left (reorder at ${s.reorderAt}). The Inventory agent will ask to order ${s.reorderQty}; or update the count if it's wrong.`,
+        section: "shipping",
+      });
+    }
+  }
+  if (state.business.channels.length > 0 && state.business.fulfillmentMode === null) {
+    out.push({
+      id: "fulfillment-mode",
+      severity: "info",
+      title: "Decide how orders get shipped",
+      detail: "Ship them yourself (AI tells you what to pack), a fulfillment company, or Amazon FBA.",
+      section: "shipping",
     });
   }
 

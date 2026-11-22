@@ -2,7 +2,7 @@ import { unitBreakdown, bpsToInput, economicsComplete } from "../shared/economic
 import { centsToInput } from "../shared/money.ts";
 import { channelNames, detectChannels, findChannel, orderByChannels } from "../shared/channels.ts";
 import { llmVaultKey } from "../shared/services.ts";
-import type { Agent, DashboardState, InputField, InputSource, ProductIdea } from "../shared/types.ts";
+import type { Agent, DashboardState, FulfillmentMode, InputField, InputSource, ProductIdea } from "../shared/types.ts";
 
 /**
  * Vault keys a field can draw from, with "llm" resolved for the agent's provider
@@ -27,7 +27,14 @@ export interface ResolvedInputs {
 }
 
 /** Effective input values: a manual value wins; otherwise the first saved vault entry. */
-export function resolveInputs(state: Pick<DashboardState, "vault"> & { business?: { channels: string[] } }, agent: Agent): ResolvedInputs {
+type InputsState = Pick<DashboardState, "vault"> & { business?: { channels: string[]; fulfillmentMode?: FulfillmentMode | null } };
+
+/** Whether a field must be filled right now (some fields aren't needed while you ship orders yourself). */
+export function requiredNow(state: InputsState, f: InputField): boolean {
+  return f.required && !(f.notNeededWhenSelfShipping && state.business?.fulfillmentMode === "self");
+}
+
+export function resolveInputs(state: InputsState, agent: Agent): ResolvedInputs {
   const channels = state.business?.channels ?? [];
   const values: Record<string, string> = {};
   const sources: Record<string, InputSource> = {};
@@ -50,17 +57,17 @@ export function resolveInputs(state: Pick<DashboardState, "vault"> & { business?
   return { values, sources };
 }
 
-export function missingInputs(state: Pick<DashboardState, "vault"> & { business?: { channels: string[] } }, agent: Agent): string[] {
+export function missingInputs(state: InputsState, agent: Agent): string[] {
   const { values } = resolveInputs(state, agent);
-  return agent.inputFields.filter((f) => f.required && (values[f.key] ?? "").trim() === "").map((f) => f.label);
+  return agent.inputFields.filter((f) => requiredNow(state, f) && (values[f.key] ?? "").trim() === "").map((f) => f.label);
 }
 
 /** Vault keys that would fill this agent's missing required inputs (first choice per field). */
-export function missingVaultKeys(state: Pick<DashboardState, "vault"> & { business?: { channels: string[] } }, agent: Agent): string[] {
+export function missingVaultKeys(state: InputsState, agent: Agent): string[] {
   const { values } = resolveInputs(state, agent);
   const keys = new Set<string>();
   for (const f of agent.inputFields) {
-    if (!f.required || (values[f.key] ?? "").trim() !== "") continue;
+    if (!requiredNow(state, f) || (values[f.key] ?? "").trim() !== "") continue;
     const first = fieldVaultKeys(agent, f, state.business?.channels ?? [])[0];
     if (first) keys.add(first);
   }
@@ -122,6 +129,8 @@ export function suggestValue(state: DashboardState, name: string): string {
     case "owner_contact":
       return b.ownerEmail;
     case "fulfillment":
+      if (b.fulfillmentMode === "self") return "Ship it myself: the dashboard's Pack & ship queue (the owner packs and drops off)";
+      if (b.fulfillmentMode === "marketplace") return "Amazon FBA";
       return primary?.fulfillment ?? "";
     case "reorder_point":
       // Daily sales × (30-day lead time + 14 days safety stock).

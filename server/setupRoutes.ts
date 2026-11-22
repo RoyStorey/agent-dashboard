@@ -2,13 +2,15 @@ import type { Response, Router } from "express";
 import { formatCents } from "../shared/money.ts";
 import { findService } from "../shared/services.ts";
 import { RECOMMENDED_ROLES, findTemplate } from "../shared/templates.ts";
-import type { DashboardState, ResearchBrief, ResearchJob, UnitEconomics } from "../shared/types.ts";
+import type { DashboardState, ResearchBrief, ResearchJob, ShipmentStatus, UnitEconomics } from "../shared/types.ts";
 import { createAgent } from "./agents.ts";
 import { applyRebalance, autoAllocate } from "./allocate.ts";
 import { isWebhookUrl, type DiscordNotifier } from "./discord.ts";
 import { aiThisMonth, computeFinance } from "./finance.ts";
 import { CHANNELS, channelNames, detectChannels, findChannel } from "../shared/channels.ts";
 import { syncChannelTasks } from "../shared/templates.ts";
+import { FULFILLMENT_LABEL, defaultSupplies } from "../shared/shipping.ts";
+import { parseShipment, logQueued, setShipmentStatus, parseSupplies, unlinkRemovedSupplies } from "./shippingInput.ts";
 import { autofillAgent, missingInputs, refreshSuggestedInputs, suggestValue } from "./inputs.ts";
 import { RESEARCH_MODEL, ResearchFailure, type ResearchRunner } from "./research.ts";
 import { estimateCostCents, type UsageCounts } from "../shared/aiPricing.ts";
@@ -96,6 +98,59 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
       Object.assign(s.economics, fees);
       refreshSuggestedInputs(before, s);
       log(s, "Owner", "info", `Applied typical ${def.name} fees to the plan.`, now());
+    });
+    sendState(res);
+  });
+
+  /* ---------- Shipping orders yourself ---------- */
+
+  owner.put("/fulfillment", (req, res) => {
+    const body = asBody(req.body);
+    const mode = body.mode;
+    if (mode !== "self" && mode !== "provider" && mode !== "marketplace" && mode !== null) throw bad('"mode" must be self, provider, marketplace or null.');
+    store.mutate((s) => {
+      const before = structuredClone(s);
+      s.business.fulfillmentMode = mode;
+      if (mode === "self" && s.supplies.length === 0) s.supplies = defaultSupplies(s.business.product, s.economics.monthlyUnits, newId);
+      refreshSuggestedInputs(before, s);
+      log(s, "Owner", "info", mode ? `Orders will be shipped by: ${FULFILLMENT_LABEL[mode]}.` : "Cleared the shipping choice.", now());
+    });
+    sendState(res);
+  });
+
+  owner.post("/shipments", (req, res) => {
+    const body = asBody(req.body);
+    store.mutate((s) => {
+      const t = now();
+      const sh = parseShipment(s, body, "Owner", t);
+      s.shipments.push(sh);
+      logQueued(s, sh, "Owner", t);
+    });
+    sendState(res);
+  });
+
+  owner.patch("/shipments/:id", (req, res) => {
+    const body = asBody(req.body);
+    const status = str(body, "status", { max: 20, required: true }) as ShipmentStatus;
+    const tracking = str(body, "trackingNumber", { max: 100 });
+    store.mutate((s) => {
+      const sh = s.shipments.find((x) => x.id === req.params.id);
+      if (!sh) throw new HttpError(404, "Shipment not found.");
+      const t = now();
+      setShipmentStatus(s, sh, status, tracking, t);
+      const what = sh.orderRef ? `order ${sh.orderRef}` : `the order for ${sh.recipientName}`;
+      if (status === "shipped") log(s, "Owner", "success", `Shipped ${what}${sh.trackingNumber ? ` (tracking ${sh.trackingNumber})` : ""}.`, t);
+      else log(s, "Owner", "info", `Marked ${what} as ${status.replace("_", " ")}.`, t);
+    });
+    sendState(res);
+  });
+
+  owner.put("/supplies", (req, res) => {
+    const body = asBody(req.body);
+    store.mutate((s) => {
+      s.supplies = parseSupplies(s, body.supplies);
+      unlinkRemovedSupplies(s);
+      log(s, "Owner", "info", "Updated stock at home.", now());
     });
     sendState(res);
   });

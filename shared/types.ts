@@ -19,6 +19,12 @@ export interface BusinessProfile {
   shippingAddress: string;
   /** How the owner chose the product: typed it in, or picked an AI research idea. */
   productSource: "manual" | "research" | null;
+  /**
+   * Who ships orders: the owner from home ("self"), a fulfillment company such
+   * as ShipBob ("provider"), or the marketplace itself, e.g. Amazon FBA
+   * ("marketplace"). null = not decided.
+   */
+  fulfillmentMode: FulfillmentMode | null;
 }
 
 /**
@@ -45,6 +51,8 @@ export type SpendCategory = "inventory" | "samples" | "shipping" | "advertising"
 
 export type InputKind = "text" | "secret" | "number" | "url" | "textarea";
 
+export type FulfillmentMode = "self" | "provider" | "marketplace";
+
 export interface InputField {
   key: string;
   label: string;
@@ -57,8 +65,10 @@ export interface InputField {
    * "llm" means "the key for this agent's model provider".
    */
   vault?: string[];
-  /** Name of a suggestion the dashboard can auto-fill (see server/autofill.ts). */
+  /** Name of a suggestion the dashboard can auto-fill (see server/inputs.ts). */
   suggest?: string;
+  /** Not needed when the owner ships orders themselves (e.g. a fulfillment company's key). */
+  notNeededWhenSelfShipping?: boolean;
 }
 
 export interface ActionDef {
@@ -114,6 +124,8 @@ export interface Agent {
   createdAt: string;
   lastSeenAt: string | null;
   lastStatusMessage: string | null;
+  /** Template action keys this agent has been offered, so upgrades add new ones once and never re-add ones you removed. */
+  seenTemplateActions?: string[];
 }
 
 export interface GlobalGuardrails {
@@ -261,6 +273,56 @@ export interface ActivityEntry {
   amountCents?: number;
 }
 
+/* ---------- Shipping it yourself ---------- */
+
+export type ShipmentStatus = "to_pack" | "packed" | "shipped" | "cancelled";
+
+export interface ShipmentItem {
+  name: string;
+  qty: number;
+  /** Stock-at-home item this uses up when shipped (optional). */
+  supplyId?: string | null;
+}
+
+/** One order the owner packs and ships by hand. */
+export interface Shipment {
+  id: string;
+  orderRef: string;
+  channel: string;
+  recipientName: string;
+  /** Full mailing address, one line per row. Stored only on this computer. */
+  address: string;
+  items: ShipmentItem[];
+  /** e.g. "Poly mailer 10×13 in". */
+  packaging: string;
+  /** Packaging item in stock at home that this uses up (optional). */
+  packagingSupplyId: string | null;
+  /** e.g. "USPS Ground Advantage". */
+  service: string;
+  notes: string;
+  status: ShipmentStatus;
+  trackingNumber: string;
+  createdAt: string;
+  createdBy: string;
+  packedAt: string | null;
+  shippedAt: string | null;
+}
+
+/** Something the owner keeps at home: product units or packing supplies. */
+export interface SupplyItem {
+  id: string;
+  name: string;
+  kind: "product" | "packaging";
+  unit: string;
+  onHand: number;
+  /** Order more when on hand falls to this. */
+  reorderAt: number;
+  /** How many to buy when reordering. */
+  reorderQty: number;
+  /** Used up automatically for every shipment (e.g. 1 label per package). */
+  usedPerShipment: number;
+}
+
 /* ---------- Credentials vault ---------- */
 
 export interface VaultEntry {
@@ -365,6 +427,8 @@ export interface DashboardState {
   research: ResearchJob[];
   aiUsage: AiUsageEntry[];
   security: SecuritySettings;
+  shipments: Shipment[];
+  supplies: SupplyItem[];
 }
 
 /* ---------- Computed views sent to the client ---------- */
@@ -419,7 +483,8 @@ export type SectionKey =
   | "credentials"
   | "integrations"
   | "settings"
-  | "money";
+  | "money"
+  | "shipping";
 
 export interface AgentReadiness {
   agentId: string;
@@ -476,6 +541,9 @@ export interface StateResponse {
   /** AI cost per local day, covering all reports (for period totals). */
   aiUsageDaily: Array<{ at: string; costCents: Cents }>;
   security: { passwordSet: boolean };
+  /** Open shipments plus the 50 most recent finished ones, newest first. */
+  shipments: Shipment[];
+  supplies: SupplyItem[];
   guardrails: GlobalGuardrails;
   funding: FundingEntry[];
   requests: ActionRequest[];
