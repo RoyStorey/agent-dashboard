@@ -2,16 +2,20 @@
 
 A local command center for running a business with a team of AI agents.
 
-You decide what to sell and provide the money. The agents do the work. This dashboard sits between them and enforces your rules on every request an agent makes:
+You provide the money and the decisions only a person can make. The agents do the work. This dashboard sits between them and enforces your rules on every request an agent makes.
 
-- **Things you need to do**: a live list of everything the business still needs from you (legal setup, accounts, missing agent inputs, approvals, funding). It updates itself as you configure things.
-- **Agent team**: add agents from templates (Orchestrator, Research, Sourcing, Storefront & Listings, Marketing & Ads, Customer Service, Inventory & Fulfillment, Finance) or build custom ones. Each agent lists the inputs it needs from you, the actions it may request, and its own token.
-- **Guardrails**: a kill switch, global per-transaction/daily/monthly caps, approval thresholds, and per-agent limits and allowed actions.
-- **Funding**: record deposits, give each agent a budget, and track spend, revenue and profit in a ledger.
-- **Approvals**: requests your guardrails held for a human decision.
-- **Activity**: a log of everything agents and you have done.
+- **Setup assistant**: a ten-step guided setup. Most steps are one click or one paste.
+- **Business & product**: type in what you sell, or let AI research what sells right now (Claude with web search). It returns ranked ideas with prices, costs, margins, competition, compliance and sources. One click fills in your profile and numbers.
+- **Credentials**: paste each key once (Anthropic, OpenAI, Google, Amazon, Shopify, Keepa, QuickBooks, ShipBob…). Every agent that needs it picks it up automatically. Each service has a direct link, exact steps, and the exact format to paste.
+- **Agent team**: add the recommended team of 8 in one click (Orchestrator, Research, Sourcing, Storefront, Marketing, Customer Service, Inventory, Finance) or build custom agents. Details are auto-filled from your profile and plan, so you only answer what nobody else can.
+- **Things you need to do**: a live list of what the business still needs from you. The legal and account steps (LLC, EIN, bank, insurance, compliance, seller accounts) each have exact steps and direct links.
+- **Financials**: P&L by period (gross sales, refunds, net sales, COGS, gross profit and margin, fees, ads, opex, net profit and margin), cash flow, KPIs (TACoS, ROAS, refund rate, average price, runway), and a unit-economics plan. The plan shows contribution margin, break-even price, break-even ad spend, break-even volume, ROI and scenarios.
+- **Discord**: an HQ channel for approvals, alerts and a daily finance summary, plus a channel per agent for its updates and reports.
+- **Guardrails**: a kill switch, global caps, approval thresholds and per-agent limits. A one-click recommended set is included.
+- **Funding**: deposits are split across agent budgets automatically by job, keeping a cash reserve. Adjust weights or any budget by hand, or rebalance in one click.
+- **Approvals** and **Activity**: what's waiting for you, and everything that happened.
 
-It runs entirely on your computer. Nothing is sent anywhere except by the agents you connect.
+It runs entirely on your computer. Nothing leaves it except calls your agents make, AI research calls to Anthropic, and Discord posts.
 
 ## Quick start
 
@@ -31,12 +35,20 @@ For development with hot reload, run `npm run dev` and open http://localhost:517
 
 ## Setting up a business
 
-1. **Business profile**: name, product and target customers. Every agent receives this.
-2. **Agent team**: add the agents you need and fill in each one's inputs (API keys, accounts, targets). An agent can't be activated until every required input is set.
-3. **Guardrails**: set global caps and approval thresholds, and review each agent's limits and allowed actions.
-4. **Funding**: record a deposit, then give each agent a budget.
-5. **Connect your agents**: copy each agent's token from its **Connect** tab into the agent's environment and activate it.
-6. Work through **Things you need to do**. Some steps (forming a company, bank accounts, seller verification, product safety) legally need a person.
+Open the dashboard and follow the **Setup assistant**:
+
+1. **Choose what to sell.** Type it in, or click "find me the best product" to have AI research it. AI research needs your Anthropic key and uses your API credits.
+2. **Your details.** Your email and shipping address, reused by agents.
+3. **Add the recommended team.** One click.
+4. **Price and cost per unit.** Filled in automatically if you picked a researched product.
+5. **Paste your keys.** Only the ones your team needs, each with a direct link and steps.
+6. **Answer what only you know.** Usually nothing or one field. Everything else is auto-filled.
+7. **Fund it.** Enter a starting budget; it is split across agents automatically.
+8. **Spending caps.** One click applies 75% of cash per month and 35% per day.
+9. **Discord** (optional). Paste one webhook per channel.
+10. **Go live.** Activate the ready agents, then give each agent's token to the program that runs it.
+
+Then work through **Things you need to do** for the legal and account steps.
 
 ## How agents connect
 
@@ -45,7 +57,8 @@ Agents talk to the dashboard over a small HTTP API, authenticated with their own
 1. `GET /api/agent/v1/config` to get the business profile, its inputs, allowed actions, guardrails and budget.
 2. `POST /api/agent/v1/actions` before every real-world action. The response is `approved`, `pending_approval` or `denied`, with reasons.
 3. `POST /api/agent/v1/actions/:id/complete` with the real amount spent, or `/cancel`. Any unused amount goes back to the agent's budget.
-4. `POST /api/agent/v1/log` and `/heartbeat` so you can see what it is doing.
+4. `POST /api/agent/v1/report` for updates (routed to the agent's Discord channel), and `/log` and `/heartbeat` so you can see what it is doing.
+5. The Finance agent sends sales with `POST /api/agent/v1/revenue` (gross, refunds, fees, units), which feeds the P&L.
 
 The full reference is in [docs/AGENT_API.md](docs/AGENT_API.md).
 
@@ -71,12 +84,20 @@ When you approve a held request, every hard limit is checked again at that momen
 
 All money is stored as whole cents. Daily and monthly caps use calendar days and months in your computer's time zone.
 
+## How the numbers work
+
+- Money is stored as whole cents and percentages as basis points (1500 = 15.00%), so totals are exact.
+- **Per unit:** net sales = price − refunds (return rate × price). Landed cost = supplier cost + freight + packaging. Gross profit = net sales − landed cost. Contribution = gross profit − marketplace fee − payment fee − fulfillment − ads. Returned units are assumed unsellable and fees are assumed not refunded, which is the conservative case.
+- **P&L:** COGS = units sold × planned landed cost. If no units have been reported, COGS falls back to inventory purchased. Spending is categorized by action (inventory, samples, shipping, advertising, refunds, software, other). Fixed overhead from the plan is prorated by days.
+- **Allocation:** new money above the reserve is split by weight with exact cents (largest remainder). Defaults: Sourcing 45, Marketing 20, Inventory 15, Finance 7, Storefront 5, Customer Service 5, Research 3. Rebalancing never sets a budget below what an agent has already spent.
+
 ## Data and security
 
 - Everything is stored in `data/db.json` (file mode 600). Back it up, and don't commit it. It's already in `.gitignore`.
 - Secrets (agent API keys) are stored in that file in plain text, so protect your computer the same way you protect saved passwords. The dashboard UI never displays a saved secret again. Only the agent that owns a secret receives it, via its config.
 - The server listens on `127.0.0.1` only. The owner API rejects requests addressed to other hostnames (DNS rebinding) and cross-site requests, and changes must be sent as JSON.
 - Agent tokens can be rotated at any time on the agent's **Connect** tab.
+- Discord webhook URLs are treated as secrets: the dashboard never sends them back to the browser. Only approval requests can ping anyone, and only the mention you configured.
 
 ### Agents on another machine
 
@@ -90,6 +111,7 @@ If your agents run elsewhere (a server or the cloud), they need to reach the age
 | `HOST` | `127.0.0.1` | Interface to bind to |
 | `DATA_DIR` | `./data` | Where `db.json` is stored |
 | `ALLOWED_HOSTS` | (none) | Extra comma-separated hostnames allowed to use the owner UI/API |
+| `DASHBOARD_URL` | `http://localhost:PORT` | Link used in Discord approval messages |
 
 ## Development
 

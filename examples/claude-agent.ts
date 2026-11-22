@@ -244,7 +244,8 @@ async function main(): Promise<void> {
     .join("\n")
     .trim();
   console.log(summary);
-  await dashboard.log(`Finished. ${summary}`, "success");
+  // Reports go to this agent's Discord channel (or HQ) when Discord is connected.
+  await dashboard.report(`${cfg.agent.name}: ${task.slice(0, 120)}`, summary || "Finished with no summary.");
   await dashboard.heartbeat("Idle");
 }
 

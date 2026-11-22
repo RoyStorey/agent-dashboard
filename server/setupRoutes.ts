@@ -160,9 +160,10 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
       const t = now();
       const cash = computeFinance(s, t).cashBalanceCents;
       if (cash <= 0) throw bad("Deposit funds first; the caps are based on your cash.");
-      // Monthly cap: half the cash (rounded down to $10). Daily cap: a tenth of that (rounded down to $1).
-      const monthly = Math.max(1000, Math.floor(cash / 2 / 1000) * 1000);
-      const daily = Math.max(100, Math.floor(monthly / 10 / 100) * 100);
+      // Monthly cap: 75% of cash; daily cap: 35% of cash, so the first inventory order (usually
+      // the biggest single purchase) fits in one day. Both rounded down to $10.
+      const monthly = Math.max(1000, Math.floor((cash * 75) / 100 / 1000) * 1000);
+      const daily = Math.max(1000, Math.floor((cash * 35) / 100 / 1000) * 1000);
       s.guardrails.monthlySpendLimitCents = monthly;
       s.guardrails.dailySpendLimitCents = daily;
       if (s.guardrails.approvalThresholdCents === null) s.guardrails.approvalThresholdCents = 10_000;

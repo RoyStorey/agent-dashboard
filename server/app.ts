@@ -865,6 +865,7 @@ export function createApp(opts: AppOptions): express.Express {
         kind: "request_approved",
         agentId: agent.id,
         amountCents: r.amountCents,
+        title: `Owner approved: ${actionLabel(agent, r.action)}${r.amountCents > 0 ? ` (${formatCents(r.amountCents)})` : ""}`,
       });
     });
     sendState(res);
@@ -886,6 +887,7 @@ export function createApp(opts: AppOptions): express.Express {
       log(s, "Owner", "warning", `Rejected ${agent?.name ?? "agent"}: ${actionLabel(agent, r.action)}.${note ? ` ${note}` : ""}`, t, {
         kind: "request_denied",
         agentId: agent?.id ?? null,
+        title: `Owner rejected: ${actionLabel(agent, r.action)}`,
       });
     });
     sendState(res);

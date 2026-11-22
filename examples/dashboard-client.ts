@@ -91,7 +91,13 @@ export class DashboardClient {
     return (await this.call<{ request: ActionRequest }>("POST", `/actions/${encodeURIComponent(id)}/cancel`, { note })).request;
   }
 
-  reportRevenue(amountCents: number, note: string): Promise<unknown> {
-    return this.call("POST", "/revenue", { amountCents, note });
+  /** Report sales. Send the breakdown when you have it so the P&L shows gross sales, refunds and fees. */
+  reportRevenue(r: { grossSalesCents: number; refundsCents?: number; feesCents?: number; unitsSold?: number; note?: string } | { amountCents: number; note?: string }): Promise<unknown> {
+    return this.call("POST", "/revenue", r);
+  }
+
+  /** Post a report; the dashboard routes it to this agent's Discord channel. */
+  report(title: string, body: string, fields?: Array<{ name: string; value: string }>): Promise<unknown> {
+    return this.call("POST", "/report", { title: title.slice(0, 200), body: body.slice(0, 4000), fields });
   }
 }

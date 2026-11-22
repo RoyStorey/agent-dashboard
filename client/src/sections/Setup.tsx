@@ -250,7 +250,7 @@ export function Setup({ state, dash, go }: SectionProps) {
       </Step>
 
       <Step n={++n} step={s("caps")} open={isOpen(7)}>
-        <p className="muted">A hard daily and monthly ceiling across all agents. Recommended: half your cash per month, a tenth of that per day.</p>
+        <p className="muted">A hard daily and monthly ceiling across all agents. Recommended: 75% of your cash per month and 35% per day, so the first inventory order still fits in one day.</p>
         <div className="row">
           <button className="btn btn-primary" disabled={state.finance.cashBalanceCents <= 0} onClick={() => void dash.run(() => api.recommendedGuardrails(), "Caps applied.")}>
             Apply recommended caps

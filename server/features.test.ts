@@ -480,3 +480,14 @@ describe("migration", () => {
     assert.equal(s.allocation.auto, true);
   });
 });
+
+describe("recommended caps", () => {
+  it("leave room for the first inventory order", async () => {
+    const store = new Store(null);
+    const app = createApp({ store });
+    await request(app).post("/api/funding").set(json).send({ type: "deposit", amountCents: 300000 }).expect(200);
+    const st = (await request(app).post("/api/guardrails/recommended").set(json).send({}).expect(200)).body as StateResponse;
+    assert.equal(st.guardrails.monthlySpendLimitCents, 225000);
+    assert.equal(st.guardrails.dailySpendLimitCents, 105000);
+  });
+});

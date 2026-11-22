@@ -66,7 +66,7 @@ export function Guardrails({ state, dash, go }: SectionProps) {
           <button
             className="btn"
             disabled={state.finance.cashBalanceCents <= 0}
-            title="Monthly cap = half your cash, daily cap = a tenth of that"
+            title="Monthly cap = 75% of cash, daily cap = 35% of cash"
             onClick={() => void dash.run(() => api.recommendedGuardrails(), "Recommended caps applied.")}
           >
             Apply recommended caps

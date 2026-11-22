@@ -96,7 +96,7 @@ export function useDashboard(): Dashboard {
 
   const notify = useCallback((kind: Toast["kind"], text: string) => {
     const id = nextId.current++;
-    setToasts((t) => [...t, { id, kind, text }]);
+    setToasts((t) => [...t, { id, kind, text }].slice(-3));
     window.setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 8000 : 3000);
   }, []);
 

@@ -28,10 +28,12 @@ Everything the agent needs to run. Call it at startup and before each run, becau
 ```json
 {
   "agent": { "id": "…", "name": "Sourcing", "role": "sourcing", "description": "…", "status": "active", "responsibilities": ["…"], "connection": { "provider": "Anthropic", "model": "claude-opus-5-5", "runtime": "" } },
-  "business": { "name": "…", "product": "…", "description": "…", "targetMarket": "…", "salesChannels": "…" },
-  "inputs": { "llm_api_key": "sk-…", "required_certifications": "UL, ETL" },
-  "inputFields": [{ "key": "llm_api_key", "label": "LLM API key", "kind": "secret", "required": true }],
+  "business": { "name": "…", "product": "…", "description": "…", "targetMarket": "…", "salesChannels": "…", "ownerName": "…", "ownerEmail": "…", "shippingAddress": "…", "productSource": "research" },
+  "economics": { "salePriceCents": 1999, "unitCostCents": 380, "inboundShippingCents": 85, "otherPerUnitCents": 0, "fulfillmentFeeCents": 397, "marketplaceFeeBps": 1500, "paymentFeeBps": 0, "adSpendBps": 1500, "returnRateBps": 500, "fixedMonthlyCents": 0, "monthlyUnits": 240 },
+  "inputs": { "llm_api_key": "sk-ant-…", "required_certifications": "UL 817" },
+  "inputFields": [{ "key": "llm_api_key", "label": "AI model API key", "kind": "secret", "required": true }],
   "missingInputs": [],
+  "reporting": { "discord": true },
   "actions": [{ "key": "order_samples", "label": "Order samples", "spends": true, "allowed": true, "alwaysRequiresApproval": false }],
   "guardrails": {
     "killSwitch": false,
@@ -43,7 +45,7 @@ Everything the agent needs to run. Call it at startup and before each run, becau
 }
 ```
 
-`null` limits mean "no limit at this level". Inputs with `kind: "secret"` are credentials for the agent's own tools. Never put them in model prompts or logs.
+`null` limits mean "no limit at this level". `inputs` are the effective values: a value typed on the agent wins, otherwise the matching key from the owner's Credentials page (the AI key follows the agent's model provider). Inputs with `kind: "secret"` are credentials for the agent's own tools. Never put them in model prompts or logs. In `economics`, percentages are basis points (1500 = 15%).
 
 ## `POST /actions`
 
@@ -101,10 +103,22 @@ Updates "last seen" and the status line shown on the dashboard. The response inc
 
 `level` is `info`, `warning`, `error` or `success`. The message appears in the dashboard's activity log.
 
-## `POST /revenue`
+## `POST /report`
 
 ```json
-{ "amountCents": 12999, "note": "Amazon settlement 2026-11-20" }
+{ "title": "Week 1 P&L", "body": "First 30 units sold. Ads at 6.7% TACoS.", "fields": [{ "name": "Net profit", "value": "$310.25" }] }
 ```
 
-Records revenue. The agent must be active, the kill switch must be off, and the agent must be allowed the `report_revenue` action (the Finance template includes it).
+Posts a report to the activity log and, when Discord is connected, to this agent's channel (or HQ if it has none). Agents never need webhook URLs. `fields` is optional (up to 20).
+
+## `POST /revenue`
+
+Send the breakdown whenever you have it, so the P&L shows gross sales, refunds, fees and units:
+
+```json
+{ "grossSalesCents": 59970, "refundsCents": 1999, "feesCents": 8996, "unitsSold": 30, "note": "Amazon settlement 2026-11-20" }
+```
+
+The net payout (`amountCents`) is computed as gross − refunds − fees. If you also send `amountCents`, it must equal that. If you only know the payout, send `{ "amountCents": 48975 }` alone.
+
+The agent must be active, the kill switch must be off, and the agent must be allowed the `report_revenue` action (the Finance template includes it). With auto-allocation on, new revenue is split across agent budgets.

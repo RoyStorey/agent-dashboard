@@ -349,7 +349,7 @@ function UnitPlan({ state, dash, actual }: Pick<SectionProps, "state" | "dash"> 
               </div>
               <div>
                 <span>Break-even volume</span>
-                <strong>{be === null ? "never (loses money per unit)" : `${be} units/month`}</strong>
+                <strong>{be === null ? "never (loses money per unit)" : be === 0 ? "from the first unit (no fixed costs)" : `${be} units/month`}</strong>
               </div>
             </div>
             <div className="kv">
