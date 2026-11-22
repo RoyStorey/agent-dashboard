@@ -122,6 +122,7 @@ export function createApp(opts: AppOptions): express.Express {
       },
       business: state.business,
       inputs: agent.inputs,
+      inputFields: agent.inputFields.map((f) => ({ key: f.key, label: f.label, kind: f.kind, required: f.required })),
       missingInputs: missingInputs(agent),
       actions: agent.actions.map((a) => ({
         ...a,
