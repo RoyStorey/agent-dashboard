@@ -20,11 +20,14 @@
   --shadow: 0 1px 2px rgb(16 24 40 / 0.05), 0 1px 3px rgb(16 24 40 / 0.06);
   --radius: 10px;
   --sidebar-w: 236px;
+  /* Text on solid green/red buttons and badges. */
+  --on-solid: #ffffff;
   color-scheme: light;
 }
 
+/* Dark theme: follows the computer's setting unless the owner picked one with the toggle. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #0f1117;
     --surface: #171a23;
     --surface-2: #1f2330;
@@ -43,9 +46,34 @@
     --bad-soft: #33201a;
     --info: #93b4ff;
     --info-soft: #1a2440;
+    --on-solid: #0f1117;
     --shadow: none;
     color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0f1117;
+  --surface: #171a23;
+  --surface-2: #1f2330;
+  --border: #2a2f3d;
+  --text: #e8eaf0;
+  --muted: #9aa1b2;
+  --accent: #8b84ff;
+  --accent-soft: #26244a;
+  --accent-text: #0f1117;
+  --good: #4ade80;
+  --good-soft: #15291d;
+  --warn: #fbbf24;
+  --warn-soft: #2e2512;
+  --bad: #fb923c;
+  --bad-strong: #f87171;
+  --bad-soft: #33201a;
+  --info: #93b4ff;
+  --info-soft: #1a2440;
+  --on-solid: #0f1117;
+  --shadow: none;
+  color-scheme: dark;
 }
 
 * {
@@ -191,7 +219,7 @@ a {
 
 .nav-count.alert {
   background: var(--bad-strong);
-  color: #fff;
+  color: var(--on-solid);
 }
 
 .sidebar-foot {
@@ -452,7 +480,7 @@ a {
 .btn-danger-solid {
   background: var(--bad-strong);
   border-color: var(--bad-strong);
-  color: #fff;
+  color: var(--on-solid);
 }
 
 .btn-danger-solid:hover:not(:disabled) {
@@ -462,7 +490,7 @@ a {
 .btn-good-solid {
   background: var(--good);
   border-color: var(--good);
-  color: #fff;
+  color: var(--on-solid);
 }
 
 .btn-sm {
@@ -914,7 +942,7 @@ pre {
 .step-dot.done {
   background: var(--good);
   border-color: var(--good);
-  color: #fff;
+  color: var(--on-solid);
 }
 
 .step {
@@ -1052,4 +1080,8 @@ ol.steps {
 
 .kv div strong {
   font-variant-numeric: tabular-nums;
+}
+
+.theme-toggle {
+  font-size: 13px;
 }

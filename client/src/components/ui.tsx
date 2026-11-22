@@ -152,9 +152,10 @@ export function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-export function ProgressBar(props: { value: number; max: number; label?: string }) {
+/** `kind="spend"` (default) turns red as it fills; `kind="progress"` is always green, since full means done. */
+export function ProgressBar(props: { value: number; max: number; label?: string; kind?: "spend" | "progress" }) {
   const pct = props.max <= 0 ? 0 : Math.min(100, Math.round((props.value / props.max) * 100));
-  const tone = pct >= 90 ? "bad" : pct >= 70 ? "warn" : "good";
+  const tone = props.kind === "progress" ? "good" : pct >= 90 ? "bad" : pct >= 70 ? "warn" : "good";
   return (
     <div className="progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={props.label}>
       <div className={`progress-fill tone-bg-${tone}`} style={{ width: `${pct}%` }} />

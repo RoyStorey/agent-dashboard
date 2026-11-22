@@ -6,6 +6,13 @@
     <meta name="color-scheme" content="light dark" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>Agent Dashboard</title>
+    <script>
+      // Apply the saved theme before the page draws, so there is no flash.
+      try {
+        var t = localStorage.getItem("agent-dashboard-theme");
+        if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

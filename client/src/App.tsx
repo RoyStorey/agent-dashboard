@@ -16,6 +16,7 @@ import { Overview } from "./sections/Overview.tsx";
 import { Settings } from "./sections/Settings.tsx";
 import { Setup, setupSteps } from "./sections/Setup.tsx";
 import { Todo } from "./sections/Todo.tsx";
+import { useTheme } from "./theme.ts";
 
 export interface SectionProps {
   state: StateResponse;
@@ -53,6 +54,7 @@ function readHash(): { section: SectionKey | null; agentId?: string } {
 
 export function App() {
   const dash = useDashboard();
+  const { theme, toggle: toggleTheme } = useTheme();
   const [route, setRoute] = useState(readHash);
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -169,6 +171,14 @@ export function App() {
             <span>Spent today</span>
             <strong className="num">{formatCents(state.finance.spentTodayCents)}</strong>
           </div>
+          <button
+            className="btn btn-sm theme-toggle"
+            onClick={toggleTheme}
+            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          >
+            {theme === "dark" ? "☀ Light" : "☾ Dark"}
+          </button>
           <button
             className={`btn ${kill ? "btn-danger-solid kill-on" : "btn-danger"}`}
             onClick={toggleKill}

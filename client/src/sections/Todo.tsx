@@ -137,7 +137,7 @@ export function Todo({ state, dash, go }: SectionProps) {
         title={`Legal & accounts: only you can do these (${done}/${state.tasks.length})`}
         actions={<span className="muted">{state.tasks.length ? Math.round((done / state.tasks.length) * 100) : 0}% complete</span>}
       >
-        <ProgressBar value={done} max={state.tasks.length} label="Checklist progress" />
+        <ProgressBar value={done} max={state.tasks.length} label="Checklist progress" kind="progress" />
         {categories.map((c) => (
           <div key={c} className="stack" style={{ gap: 0 }}>
             <h4 className="nav-group" style={{ margin: "8px 0 0" }}>

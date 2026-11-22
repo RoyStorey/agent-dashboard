@@ -15,6 +15,8 @@ You provide the money and the decisions only a person can make. The agents do th
 - **Funding**: deposits are split across agent budgets automatically by job, keeping a cash reserve. Adjust weights or any budget by hand, or rebalance in one click.
 - **Approvals** and **Activity**: what's waiting for you, and everything that happened.
 
+Light and dark mode: use the ☾ Dark / ☀ Light button in the top bar. Your choice is remembered; until you pick one, it follows your computer's setting.
+
 It runs entirely on your computer. Nothing leaves it except calls your agents make, AI research calls to Anthropic, and Discord posts.
 
 ## Quick start

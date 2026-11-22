@@ -131,7 +131,7 @@ export function Setup({ state, dash, go }: SectionProps) {
           </strong>
           {doneCount === required.length && <Badge tone="good">Your team is running</Badge>}
         </div>
-        <ProgressBar value={doneCount} max={required.length} label="Setup progress" />
+        <ProgressBar value={doneCount} max={required.length} label="Setup progress" kind="progress" />
       </Card>
 
       <Step n={++n} step={s("product")} open={isOpen(0)}>
