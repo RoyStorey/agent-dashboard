@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { createApp } from "./app.ts";
+import { DiscordNotifier } from "./discord.ts";
 import { Store } from "./store.ts";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -15,7 +16,14 @@ const extraHosts = (process.env.ALLOWED_HOSTS ?? "")
   .filter(Boolean);
 
 const store = new Store(DATA_DIR);
-const app = createApp({ store, allowedHosts: ["localhost", "127.0.0.1", "[::1]", ...extraHosts] });
+const notifier = new DiscordNotifier(store, undefined, process.env.DASHBOARD_URL ?? `http://localhost:${PORT}`);
+notifier.attach();
+const app = createApp({ store, notifier, allowedHosts: ["localhost", "127.0.0.1", "[::1]", ...extraHosts] });
+
+// Daily Discord summary: checked every minute, sent once per day after the configured hour.
+setInterval(() => {
+  notifier.tick(new Date()).catch((err) => console.error("Discord summary failed", err));
+}, 60_000).unref();
 
 // Serve the built dashboard (npm run build) if present; in dev, Vite serves it.
 const dist = path.join(root, "dist");

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import express, { type NextFunction, type Request, type Response } from "express";
 import { formatCents } from "../shared/money.ts";
+import { findService } from "../shared/services.ts";
 import { AGENT_TEMPLATES, findTemplate } from "../shared/templates.ts";
 import type {
   ActionDef,
@@ -15,6 +16,11 @@ import type {
   TaskCategory,
 } from "../shared/types.ts";
 import { createAgent, toView } from "./agents.ts";
+import { maskWebhook, type DiscordNotifier } from "./discord.ts";
+import { autofillAgent, resolveInputs } from "./inputs.ts";
+import { registerSetupRoutes } from "./setupRoutes.ts";
+import { anthropicResearch, type ResearchRunner } from "./research.ts";
+import { autoAllocate } from "./allocate.ts";
 import { computeFinance } from "./finance.ts";
 import { evaluate, hardLimitViolations } from "./guardrails.ts";
 import { computeOwnerActions, computeReadiness, missingInputs } from "./readiness.ts";
@@ -39,6 +45,46 @@ export interface AppOptions {
   /** Hostnames (without port) allowed to use the owner API. */
   allowedHosts?: string[];
   now?: () => Date;
+  /** Runs AI product research. Defaults to Claude with web search. */
+  research?: ResearchRunner;
+  /** Posts activity to Discord. Optional (tests usually omit it). */
+  notifier?: DiscordNotifier;
+}
+
+/** Parses a revenue report: either a net payout, or gross sales with optional refunds, fees and units. */
+export function parseRevenue(body: Body): {
+  amountCents: number;
+  grossSalesCents?: number;
+  refundsCents?: number;
+  feesCents?: number;
+  unitsSold?: number;
+} {
+  const gross = cents(body, "grossSalesCents");
+  const refunds = cents(body, "refundsCents");
+  const fees = cents(body, "feesCents");
+  const units = body.unitsSold;
+  if (units !== undefined && (typeof units !== "number" || !Number.isSafeInteger(units) || units < 0)) {
+    throw bad('"unitsSold" must be a whole number of units.');
+  }
+  const amount = cents(body, "amountCents");
+  if (gross === undefined) {
+    if (amount === undefined || amount === 0) throw bad('Send "amountCents" (net payout) or "grossSalesCents".');
+    if (refunds !== undefined || fees !== undefined) throw bad('"refundsCents" and "feesCents" need "grossSalesCents".');
+    return { amountCents: amount, ...(units !== undefined ? { unitsSold: units as number } : {}) };
+  }
+  if (gross === 0) throw bad('"grossSalesCents" must be greater than zero.');
+  const net = gross - (refunds ?? 0) - (fees ?? 0);
+  if (net < 0) throw bad("Refunds plus fees cannot exceed gross sales.");
+  if (amount !== undefined && amount !== net) {
+    throw bad(`"amountCents" (${formatCents(amount)}) must equal gross − refunds − fees (${formatCents(net)}), or be left out.`);
+  }
+  return {
+    amountCents: net,
+    grossSalesCents: gross,
+    refundsCents: refunds ?? 0,
+    feesCents: fees ?? 0,
+    ...(units !== undefined ? { unitsSold: units as number } : {}),
+  };
 }
 
 const INPUT_KINDS: readonly InputKind[] = ["text", "secret", "number", "url", "textarea"];
@@ -49,6 +95,23 @@ const MAX_ACTIVITY_RETURNED = 300;
 
 function actionLabel(agent: Agent | undefined, key: string): string {
   return agent?.actions.find((a) => a.key === key)?.label ?? key;
+}
+
+function revenueFields(rev: ReturnType<typeof parseRevenue>): Array<{ name: string; value: string }> {
+  const out = [{ name: "Net payout", value: formatCents(rev.amountCents) }];
+  if (rev.grossSalesCents !== undefined) out.unshift({ name: "Gross sales", value: formatCents(rev.grossSalesCents) });
+  if (rev.refundsCents) out.push({ name: "Refunds", value: formatCents(rev.refundsCents) });
+  if (rev.feesCents) out.push({ name: "Fees", value: formatCents(rev.feesCents) });
+  if (rev.unitsSold !== undefined) out.push({ name: "Units", value: String(rev.unitsSold) });
+  return out;
+}
+
+function maskVault(key: string, value: string): string {
+  const svc = findService(key);
+  if (svc && !svc.secret) return value;
+  const v = value.trim();
+  if (!v) return "";
+  return v.length <= 8 ? "••••" : `••••${v.slice(-4)}`;
 }
 
 function hostnameOf(hostHeader: string): string {
@@ -121,9 +184,11 @@ export function createApp(opts: AppOptions): express.Express {
         connection: agent.connection,
       },
       business: state.business,
-      inputs: agent.inputs,
+      economics: state.economics,
+      inputs: resolveInputs(state, agent).values,
       inputFields: agent.inputFields.map((f) => ({ key: f.key, label: f.label, kind: f.kind, required: f.required })),
-      missingInputs: missingInputs(agent),
+      missingInputs: missingInputs(state, agent),
+      reporting: { discord: state.discord.enabled && Boolean(state.discord.agentWebhooks[agent.id] || state.discord.defaultWebhookUrl) },
       actions: agent.actions.map((a) => ({
         ...a,
         allowed: agent.guardrails.allowedActions.includes(a.key),
@@ -168,7 +233,7 @@ export function createApp(opts: AppOptions): express.Express {
       const agent = currentAgent(s, res);
       const t = now();
       touch(agent, t);
-      return log(s, agent.name, level, message, t);
+      return log(s, agent.name, level, message, t, { kind: "log", agentId: agent.id });
     });
     res.status(201).json({ entry });
   });
@@ -201,10 +266,15 @@ export function createApp(opts: AppOptions): express.Express {
       s.requests.push(r);
       const money = amountCents > 0 ? ` for ${formatCents(amountCents)}` : "";
       const label = actionLabel(agent, action);
-      if (ev.decision === "approved") log(s, agent.name, "info", `Approved: ${label}${money}.`, t);
+      const extra = { agentId: agent.id, amountCents, fields: description ? [{ name: "Why", value: description }] : undefined };
+      if (ev.decision === "approved") log(s, agent.name, "info", `Approved: ${label}${money}.`, t, { ...extra, kind: "request_approved" });
       else if (ev.decision === "pending_approval")
-        log(s, agent.name, "warning", `Needs your approval: ${label}${money}. ${ev.reasons.join(" ")}`, t);
-      else log(s, agent.name, "error", `Denied: ${label}${money}. ${ev.reasons.join(" ")}`, t);
+        log(s, agent.name, "warning", `Needs your approval: ${label}${money}. ${ev.reasons.join(" ")}`, t, {
+          ...extra,
+          kind: "request_pending",
+          title: `Approval needed: ${agent.name} wants to ${label.toLowerCase()}${money}`,
+        });
+      else log(s, agent.name, "error", `Denied: ${label}${money}. ${ev.reasons.join(" ")}`, t, { ...extra, kind: "request_denied" });
       return r;
     });
     res.status(201).json({ request });
@@ -240,7 +310,11 @@ export function createApp(opts: AppOptions): express.Express {
       request.closedAt = t.toISOString();
       request.resultNote = note;
       const money = finalAmount > 0 ? ` (${formatCents(finalAmount)})` : "";
-      log(s, agent.name, "success", `Completed: ${actionLabel(agent, request.action)}${money}. ${note}`.trim(), t);
+      log(s, agent.name, "success", `Completed: ${actionLabel(agent, request.action)}${money}. ${note}`.trim(), t, {
+        kind: "request_closed",
+        agentId: agent.id,
+        amountCents: finalAmount,
+      });
       return request;
     });
     res.json({ request });
@@ -259,7 +333,7 @@ export function createApp(opts: AppOptions): express.Express {
       request.status = "cancelled";
       request.closedAt = t.toISOString();
       request.resultNote = note;
-      log(s, agent.name, "info", `Cancelled: ${actionLabel(agent, request.action)}. ${note}`.trim(), t);
+      log(s, agent.name, "info", `Cancelled: ${actionLabel(agent, request.action)}. ${note}`.trim(), t, { kind: "log", agentId: agent.id });
       return request;
     });
     res.json({ request });
@@ -267,7 +341,7 @@ export function createApp(opts: AppOptions): express.Express {
 
   agentApi.post("/revenue", (req, res) => {
     const body = asBody(req.body);
-    const amountCents = cents(body, "amountCents", { required: true, positive: true }) as number;
+    const rev = parseRevenue(body);
     const note = str(body, "note", { max: 500 }) ?? "";
     const entry = store.mutate((s) => {
       const agent = currentAgent(s, res);
@@ -275,10 +349,39 @@ export function createApp(opts: AppOptions): express.Express {
       touch(agent, t);
       const problems = hardLimitViolations(s, agent, { action: "report_revenue", amountCents: 0 }, t);
       if (problems.length > 0) throw new HttpError(403, problems.join(" "));
-      const e = { id: newId(), type: "revenue" as const, amountCents, note, agentId: agent.id, createdAt: t.toISOString() };
+      const e = { id: newId(), type: "revenue" as const, ...rev, note, agentId: agent.id, createdAt: t.toISOString() };
       s.funding.push(e);
-      log(s, agent.name, "success", `Reported revenue of ${formatCents(amountCents)}. ${note}`.trim(), t);
+      log(s, agent.name, "success", `Reported revenue: ${formatCents(rev.amountCents)} net payout. ${note}`.trim(), t, {
+        kind: "revenue",
+        agentId: agent.id,
+        amountCents: rev.amountCents,
+        title: "Sales reported",
+        fields: revenueFields(rev),
+      });
+      if (s.allocation.auto) autoAllocate(s, t, "revenue");
       return e;
+    });
+    res.status(201).json({ entry });
+  });
+
+  agentApi.post("/report", (req, res) => {
+    const body = asBody(req.body);
+    const title = str(body, "title", { max: 200, required: true }) as string;
+    const text = str(body, "body", { max: 4000, required: true }) as string;
+    const rawFields = body.fields;
+    let fields: Array<{ name: string; value: string }> | undefined;
+    if (rawFields !== undefined) {
+      if (!Array.isArray(rawFields) || rawFields.length > 20) throw bad('"fields" must be a list of up to 20 {name, value} items.');
+      fields = rawFields.map((f) => {
+        const o = asBody(f);
+        return { name: str(o, "name", { max: 200, required: true }) as string, value: str(o, "value", { max: 1000, required: true }) as string };
+      });
+    }
+    const entry = store.mutate((s) => {
+      const agent = currentAgent(s, res);
+      const t = now();
+      touch(agent, t);
+      return log(s, agent.name, "info", text, t, { kind: "report", agentId: agent.id, title, fields });
     });
     res.status(201).json({ entry });
   });
@@ -326,8 +429,31 @@ export function createApp(opts: AppOptions): express.Express {
     const finance = computeFinance(s, t);
     return {
       business: s.business,
+      economics: s.economics,
       tasks: s.tasks,
-      agents: s.agents.map(toView),
+      agents: s.agents.map((a) => toView(a, s)),
+      vault: Object.entries(s.vault).map(([key, v]) => ({
+        key,
+        set: v.value.trim() !== "",
+        preview: maskVault(key, v.value),
+        updatedAt: v.updatedAt,
+        ...(v.label ? { label: v.label } : {}),
+      })),
+      discord: {
+        enabled: s.discord.enabled,
+        events: s.discord.events,
+        dailySummaryHour: s.discord.dailySummaryHour,
+        lastDailySummaryDate: s.discord.lastDailySummaryDate,
+        approvalMention: s.discord.approvalMention,
+        defaultWebhookSet: s.discord.defaultWebhookUrl !== "",
+        defaultWebhookPreview: maskWebhook(s.discord.defaultWebhookUrl),
+        agentWebhooksSet: Object.fromEntries(Object.entries(s.discord.agentWebhooks).filter(([, u]) => u).map(([id, u]) => [id, maskWebhook(u)])),
+        lastError: opts.notifier?.lastError ?? null,
+        lastErrorAt: opts.notifier?.lastErrorAt ?? null,
+        sentCount: opts.notifier?.sentCount ?? 0,
+      },
+      allocation: s.allocation,
+      research: s.research,
       guardrails: s.guardrails,
       funding: [...s.funding].reverse(),
       requests: [...s.requests].reverse(),
@@ -357,6 +483,11 @@ export function createApp(opts: AppOptions): express.Express {
       b.description = str(body, "description", { max: 5000 }) ?? b.description;
       b.targetMarket = str(body, "targetMarket", { max: 1000 }) ?? b.targetMarket;
       b.salesChannels = str(body, "salesChannels", { max: 1000 }) ?? b.salesChannels;
+      b.ownerName = str(body, "ownerName", { max: 200 }) ?? b.ownerName;
+      b.ownerEmail = str(body, "ownerEmail", { max: 200 }) ?? b.ownerEmail;
+      b.shippingAddress = str(body, "shippingAddress", { max: 1000 }) ?? b.shippingAddress;
+      if (body.product !== undefined && b.productSource === null) b.productSource = "manual";
+      for (const a of s.agents) autofillAgent(s, a);
       log(s, "Owner", "info", "Updated the business profile.", now());
     });
     sendState(res);
@@ -376,7 +507,20 @@ export function createApp(opts: AppOptions): express.Express {
     const description = str(body, "description", { max: 2000 }) ?? "";
     const category = oneOf(body, "category", TASK_CATEGORIES) ?? "custom";
     store.mutate((s) => {
-      s.tasks.push({ id: newId(), title: title.trim(), description, category, status: "todo", notes: "", custom: true, completedAt: null });
+      s.tasks.push({
+        id: newId(),
+        title: title.trim(),
+        description,
+        category,
+        status: "todo",
+        notes: "",
+        custom: true,
+        completedAt: null,
+        steps: [],
+        links: [],
+        time: "",
+        templateKey: null,
+      });
       log(s, "Owner", "info", `Added task "${title.trim()}".`, now());
     });
     sendState(res);
@@ -430,6 +574,7 @@ export function createApp(opts: AppOptions): express.Express {
     let id = "";
     store.mutate((s) => {
       const agent = createAgent(role, name, now());
+      autofillAgent(s, agent);
       s.agents.push(agent);
       id = agent.id;
       log(s, "Owner", "info", `Added agent "${agent.name}".`, now());
@@ -575,7 +720,7 @@ export function createApp(opts: AppOptions): express.Express {
       const status = oneOf(body, "status", ["draft", "active", "paused"] as const);
       if (status !== undefined && status !== agent.status) {
         if (status === "active") {
-          const missing = missingInputs(agent);
+          const missing = missingInputs(s, agent);
           if (missing.length > 0) throw bad(`Cannot activate ${agent.name}: missing ${missing.join(", ")}.`);
         }
         agent.status = status;
@@ -655,7 +800,9 @@ export function createApp(opts: AppOptions): express.Express {
       if (threshold !== undefined) g.approvalThresholdCents = threshold;
       if (kill !== undefined && kill !== g.killSwitch) {
         g.killSwitch = kill;
-        log(s, "Owner", kill ? "error" : "success", kill ? "KILL SWITCH ON: all agent activity stopped." : "Kill switch off: agents may resume.", t);
+        log(s, "Owner", kill ? "error" : "success", kill ? "KILL SWITCH ON: all agent activity stopped." : "Kill switch off: agents may resume.", t, {
+          kind: "system",
+        });
       }
       if ([per, daily, monthly, threshold].some((v) => v !== undefined)) log(s, "Owner", "info", "Updated global guardrails.", t);
     });
@@ -667,8 +814,9 @@ export function createApp(opts: AppOptions): express.Express {
   owner.post("/funding", (req, res) => {
     const body = asBody(req.body);
     const type = oneOf(body, "type", FUNDING_TYPES, true) as FundingType;
-    const amountCents = cents(body, "amountCents", { required: true, positive: true }) as number;
     const note = str(body, "note", { max: 500 }) ?? "";
+    const rev = type === "revenue" ? parseRevenue(body) : null;
+    const amountCents = rev ? rev.amountCents : (cents(body, "amountCents", { required: true, positive: true }) as number);
     store.mutate((s) => {
       const t = now();
       if (type === "withdrawal") {
@@ -677,9 +825,18 @@ export function createApp(opts: AppOptions): express.Express {
           throw bad(`You can only withdraw unallocated funds (${formatCents(available)}). Lower agent budgets first.`);
         }
       }
-      s.funding.push({ id: newId(), type, amountCents, note, agentId: null, createdAt: t.toISOString() });
-      const verb = type === "deposit" ? "Deposited" : type === "withdrawal" ? "Withdrew" : "Recorded revenue of";
-      log(s, "Owner", "info", `${verb} ${formatCents(amountCents)}.${note ? ` ${note}` : ""}`, t);
+      s.funding.push({ id: newId(), type, ...(rev ?? { amountCents }), note, agentId: null, createdAt: t.toISOString() });
+      if (rev) {
+        log(s, "Owner", "success", `Recorded sales: ${formatCents(rev.amountCents)} net payout.${note ? ` ${note}` : ""}`, t, {
+          kind: "revenue",
+          amountCents: rev.amountCents,
+          title: "Sales recorded",
+          fields: revenueFields(rev),
+        });
+      } else {
+        log(s, "Owner", "info", `${type === "deposit" ? "Deposited" : "Withdrew"} ${formatCents(amountCents)}.${note ? ` ${note}` : ""}`, t);
+      }
+      if (type !== "withdrawal" && s.allocation.auto) autoAllocate(s, t, type);
     });
     sendState(res);
   });
@@ -704,7 +861,11 @@ export function createApp(opts: AppOptions): express.Express {
       r.decidedAt = t.toISOString();
       r.decidedBy = "owner";
       r.reasons = [...r.reasons, "Approved by owner."];
-      log(s, "Owner", "success", `Approved ${agent.name}: ${actionLabel(agent, r.action)}${r.amountCents > 0 ? ` for ${formatCents(r.amountCents)}` : ""}.`, t);
+      log(s, "Owner", "success", `Approved ${agent.name}: ${actionLabel(agent, r.action)}${r.amountCents > 0 ? ` for ${formatCents(r.amountCents)}` : ""}.`, t, {
+        kind: "request_approved",
+        agentId: agent.id,
+        amountCents: r.amountCents,
+      });
     });
     sendState(res);
   });
@@ -722,7 +883,10 @@ export function createApp(opts: AppOptions): express.Express {
       r.resultNote = note;
       r.reasons = [...r.reasons, `Rejected by owner.${note ? ` ${note}` : ""}`];
       const agent = s.agents.find((a) => a.id === r.agentId);
-      log(s, "Owner", "warning", `Rejected ${agent?.name ?? "agent"}: ${actionLabel(agent, r.action)}.${note ? ` ${note}` : ""}`, t);
+      log(s, "Owner", "warning", `Rejected ${agent?.name ?? "agent"}: ${actionLabel(agent, r.action)}.${note ? ` ${note}` : ""}`, t, {
+        kind: "request_denied",
+        agentId: agent?.id ?? null,
+      });
     });
     sendState(res);
   });
@@ -749,6 +913,8 @@ export function createApp(opts: AppOptions): express.Express {
     });
     sendState(res);
   });
+
+  registerSetupRoutes(owner, { store, now, sendState, research: opts.research ?? anthropicResearch, notifier: opts.notifier });
 
   app.use("/api", owner);
 

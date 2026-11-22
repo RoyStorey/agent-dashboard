@@ -1,13 +1,12 @@
+import { economicsComplete } from "../shared/economics.ts";
 import { formatCents } from "../shared/money.ts";
+import { findService } from "../shared/services.ts";
 import type { Agent, AgentReadiness, DashboardState, FinanceSummary, OwnerAction } from "../shared/types.ts";
+import { missingInputs, missingVaultKeys, resolveInputs, fieldVaultKeys } from "./inputs.ts";
 
-export function missingInputs(agent: Agent): string[] {
-  return agent.inputFields
-    .filter((f) => f.required && (agent.inputs[f.key] ?? "").trim() === "")
-    .map((f) => f.label);
-}
+export { missingInputs };
 
-/** True if the agent is allowed to spend but has no budget allocated. */
+/** True if the agent is allowed to spend but has no budget left. */
 export function needsBudget(agent: Agent, finance: FinanceSummary): boolean {
   const canSpend = agent.actions.some((a) => a.spends && agent.guardrails.allowedActions.includes(a.key));
   if (!canSpend) return false;
@@ -17,10 +16,23 @@ export function needsBudget(agent: Agent, finance: FinanceSummary): boolean {
 
 export function computeReadiness(state: DashboardState, finance: FinanceSummary): AgentReadiness[] {
   return state.agents.map((a) => {
-    const missing = missingInputs(a);
-    const budget = needsBudget(a, finance);
-    return { agentId: a.id, missingInputs: missing, needsBudget: budget, ready: missing.length === 0 };
+    const missing = missingInputs(state, a);
+    return {
+      agentId: a.id,
+      missingInputs: missing,
+      missingVaultKeys: missingVaultKeys(state, a),
+      needsBudget: needsBudget(a, finance),
+      ready: missing.length === 0,
+    };
   });
+}
+
+/** Required inputs that no vault entry can fill: the owner has to type them on the agent. */
+function manualMissing(state: DashboardState, agent: Agent): string[] {
+  const { values } = resolveInputs(state, agent);
+  return agent.inputFields
+    .filter((f) => f.required && (values[f.key] ?? "").trim() === "" && fieldVaultKeys(agent, f).length === 0)
+    .map((f) => f.label);
 }
 
 /**
@@ -41,13 +53,31 @@ export function computeOwnerActions(state: DashboardState, finance: FinanceSumma
     });
   }
 
-  if (!b.name.trim() || !b.product.trim()) {
+  const running = state.research.find((r) => r.status === "running");
+  const unchosen = [...state.research].reverse().find((r) => r.status === "done" && r.chosenIndex === null && r.ideas.length > 0);
+  if (!b.product.trim()) {
+    if (running) {
+      out.push({ id: "research-running", severity: "info", title: "AI is researching product ideas", detail: "Results appear on the Business & product page in a few minutes.", section: "business" });
+    } else if (unchosen) {
+      out.push({ id: "research-choose", severity: "blocker", title: `Pick one of ${unchosen.ideas.length} researched product ideas`, detail: "One click fills in your business profile and unit economics.", section: "business" });
+    } else {
+      out.push({
+        id: "business-profile",
+        severity: "blocker",
+        title: "Choose what to sell",
+        detail: "Type it in if you know it, or let AI research the best opportunity for your budget.",
+        section: "business",
+      });
+    }
+  }
+
+  if (b.product.trim() && !economicsComplete(state.economics)) {
     out.push({
-      id: "business-profile",
-      severity: "blocker",
-      title: "Describe your business and product",
-      detail: "Agents receive this profile so they know what they are selling.",
-      section: "business",
+      id: "economics",
+      severity: "warning",
+      title: "Enter sale price and unit cost",
+      detail: "Needed for margins, break-even price and profit numbers.",
+      section: "financials",
     });
   }
 
@@ -56,9 +86,39 @@ export function computeOwnerActions(state: DashboardState, finance: FinanceSumma
       id: "no-agents",
       severity: "blocker",
       title: "Add your agent team",
-      detail: "Add agents from templates (Research, Sourcing, Storefront, ...) on the Agent Team page.",
+      detail: "One click adds the recommended team of 8 agents.",
       section: "agents",
     });
+  }
+
+  // Credentials: one item per vault key, listing which agents it unblocks.
+  const byKey = new Map<string, string[]>();
+  for (const a of state.agents) {
+    for (const k of missingVaultKeys(state, a)) byKey.set(k, [...(byKey.get(k) ?? []), a.name]);
+  }
+  for (const [key, names] of byKey) {
+    const svc = findService(key);
+    out.push({
+      id: `vault-${key}`,
+      severity: "blocker",
+      title: `Paste your ${svc?.label ?? key}`,
+      detail: `Unblocks ${names.length === 1 ? names[0] : `${names.length} agents (${names.join(", ")})`}. ${svc ? `Takes about ${svc.time}.` : ""}`.trim(),
+      section: "credentials",
+    });
+  }
+
+  for (const a of state.agents) {
+    const missing = manualMissing(state, a);
+    if (missing.length > 0) {
+      out.push({
+        id: `inputs-${a.id}`,
+        severity: "blocker",
+        title: `${a.name}: fill in ${missing.length} detail${missing.length === 1 ? "" : "s"}`,
+        detail: missing.join(", "),
+        section: "agents",
+        agentId: a.id,
+      });
+    }
   }
 
   if (finance.depositedCents === 0) {
@@ -66,7 +126,7 @@ export function computeOwnerActions(state: DashboardState, finance: FinanceSumma
       id: "no-funding",
       severity: "blocker",
       title: "Fund the project",
-      detail: "Deposit a starting budget. Agents cannot spend anything until money is allocated to them.",
+      detail: "Enter your starting budget. It is split across agents automatically.",
       section: "funding",
     });
   }
@@ -83,43 +143,27 @@ export function computeOwnerActions(state: DashboardState, finance: FinanceSumma
   }
 
   for (const a of state.agents) {
-    const missing = missingInputs(a);
-    if (missing.length > 0) {
-      out.push({
-        id: `inputs-${a.id}`,
-        severity: "blocker",
-        title: `${a.name}: provide ${missing.length} required input${missing.length === 1 ? "" : "s"}`,
-        detail: missing.join(", "),
-        section: "agents",
-        agentId: a.id,
-      });
-    }
-  }
-
-  for (const a of state.agents) {
-    if (needsBudget(a, finance)) {
+    if (needsBudget(a, finance) && finance.depositedCents > 0) {
       out.push({
         id: `budget-${a.id}`,
         severity: "warning",
-        title: `${a.name}: allocate a budget`,
-        detail: "This agent has spending actions enabled but no remaining budget.",
+        title: `${a.name}: no budget left`,
+        detail: "Use “Auto-allocate” on the Funding page or set it by hand.",
         section: "funding",
         agentId: a.id,
       });
     }
   }
 
-  for (const a of state.agents) {
-    if (a.status === "draft" && missingInputs(a).length === 0) {
-      out.push({
-        id: `activate-${a.id}`,
-        severity: "info",
-        title: `${a.name} is configured but not active`,
-        detail: "Activate it on the Agent Team page when you are ready.",
-        section: "agents",
-        agentId: a.id,
-      });
-    }
+  const readyDrafts = state.agents.filter((a) => a.status === "draft" && missingInputs(state, a).length === 0);
+  if (readyDrafts.length > 0) {
+    out.push({
+      id: "activate-ready",
+      severity: "info",
+      title: `${readyDrafts.length} agent${readyDrafts.length === 1 ? " is" : "s are"} ready to activate`,
+      detail: readyDrafts.map((a) => a.name).join(", "),
+      section: "setup",
+    });
   }
 
   const g = state.guardrails;
@@ -127,9 +171,19 @@ export function computeOwnerActions(state: DashboardState, finance: FinanceSumma
     out.push({
       id: "no-global-cap",
       severity: "warning",
-      title: "Set a global daily or monthly spending cap",
-      detail: "A hard ceiling protects you if an agent misbehaves.",
+      title: "Set a daily or monthly spending cap",
+      detail: "One click applies safe caps based on your funding.",
       section: "guardrails",
+    });
+  }
+
+  if (state.agents.length > 0 && !(state.discord.enabled && state.discord.defaultWebhookUrl)) {
+    out.push({
+      id: "discord",
+      severity: "info",
+      title: "Connect Discord for team updates",
+      detail: "Each agent posts its updates to its own channel; approvals and finance go to HQ.",
+      section: "integrations",
     });
   }
 
@@ -138,7 +192,7 @@ export function computeOwnerActions(state: DashboardState, finance: FinanceSumma
       id: "over-allocated",
       severity: "warning",
       title: "Agent budgets exceed available cash",
-      detail: `Budgets are over cash by ${formatCents(-finance.unallocatedCents)}. Deposit funds or reduce budgets.`,
+      detail: `Budgets are over cash by ${formatCents(-finance.unallocatedCents)}. Deposit funds or click Rebalance on the Funding page.`,
       section: "funding",
     });
   }
@@ -148,8 +202,8 @@ export function computeOwnerActions(state: DashboardState, finance: FinanceSumma
     out.push({
       id: "open-tasks",
       severity: "info",
-      title: `${openTasks} setup task${openTasks === 1 ? "" : "s"} left on your checklist`,
-      detail: "These need a human: legal, banking, accounts and approvals.",
+      title: `${openTasks} legal & account step${openTasks === 1 ? "" : "s"} only you can do`,
+      detail: "Each has exact steps and direct links.",
       section: "todo",
     });
   }

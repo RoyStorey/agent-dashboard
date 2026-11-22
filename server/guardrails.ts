@@ -1,7 +1,7 @@
 import { formatCents } from "../shared/money.ts";
 import type { Agent, DashboardState } from "../shared/types.ts";
 import { computeFinance, spentThisMonth, spentToday, agentSpentToday } from "./finance.ts";
-import { missingInputs } from "./readiness.ts";
+import { missingInputs } from "./inputs.ts";
 
 export type Decision = "approved" | "pending_approval" | "denied";
 
@@ -34,7 +34,7 @@ export function hardLimitViolations(
   if (g.killSwitch) reasons.push("Kill switch is on: all agent activity is stopped.");
   if (agent.status !== "active") reasons.push(`Agent is ${agent.status}, not active.`);
 
-  const missing = missingInputs(agent);
+  const missing = missingInputs(state, agent);
   if (missing.length > 0) reasons.push(`Agent is missing required inputs: ${missing.join(", ")}.`);
 
   const def = agent.actions.find((a) => a.key === proposal.action);

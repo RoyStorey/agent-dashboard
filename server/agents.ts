@@ -1,5 +1,6 @@
 import { CUSTOM_ROLE, findTemplate } from "../shared/templates.ts";
-import type { Agent, AgentView } from "../shared/types.ts";
+import type { Agent, AgentView, DashboardState } from "../shared/types.ts";
+import { resolveInputs } from "./inputs.ts";
 import { newId, newToken } from "./store.ts";
 
 export function createAgent(role: string, name: string | undefined, now: Date): Agent {
@@ -36,7 +37,7 @@ export function maskToken(token: string): string {
 }
 
 /** The owner UI never receives secret values or the full API token. */
-export function toView(agent: Agent): AgentView {
+export function toView(agent: Agent, state: Pick<DashboardState, "vault">): AgentView {
   const inputs: Record<string, string> = {};
   const secretsSet: Record<string, boolean> = {};
   for (const f of agent.inputFields) {
@@ -50,5 +51,5 @@ export function toView(agent: Agent): AgentView {
   }
   const { apiToken, inputs: _omit, ...rest } = agent;
   void _omit;
-  return { ...rest, inputs, secretsSet, apiTokenPreview: maskToken(apiToken) };
+  return { ...rest, inputs, secretsSet, inputSources: resolveInputs(state, agent).sources, apiTokenPreview: maskToken(apiToken) };
 }

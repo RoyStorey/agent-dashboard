@@ -69,7 +69,7 @@ describe("guardrails", () => {
     agent.inputs["llm_api_key"] = "";
     const e = evaluate(state, agent, { action: "request_quote", amountCents: 0 }, NOW);
     assert.equal(e.decision, "denied");
-    assert.match(e.reasons.join(" "), /LLM API key/);
+    assert.match(e.reasons.join(" "), /AI model API key/);
   });
 
   it("denies actions that are unknown or not allowed", () => {
@@ -182,12 +182,19 @@ describe("owner actions", () => {
     assert.ok(ids.includes("open-tasks"));
   });
 
-  it("lists missing agent inputs", () => {
+  it("groups missing credentials by vault key and lists other missing details per agent", () => {
     const state = defaultState();
-    const agent = createAgent("research", undefined, NOW);
-    state.agents.push(agent);
-    const a = computeOwnerActions(state, computeFinance(state, NOW)).find((x) => x.id === `inputs-${agent.id}`);
-    assert.ok(a);
-    assert.match(a.detail, /LLM API key/);
+    const research = createAgent("research", undefined, NOW);
+    const sourcing = createAgent("sourcing", undefined, NOW);
+    state.agents.push(research, sourcing);
+    const actions = computeOwnerActions(state, computeFinance(state, NOW));
+    const llm = actions.find((x) => x.id === "vault-anthropic");
+    assert.ok(llm);
+    assert.match(llm.detail, /2 agents/);
+    const manual = actions.find((x) => x.id === `inputs-${research.id}`);
+    assert.ok(manual);
+    assert.match(manual.detail, /Categories \/ keywords/);
+    state.vault.anthropic = { value: "sk-ant-x", updatedAt: NOW.toISOString() };
+    assert.ok(!computeOwnerActions(state, computeFinance(state, NOW)).some((x) => x.id === "vault-anthropic"));
   });
 });
