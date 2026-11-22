@@ -696,3 +696,116 @@ describe("sales channels", () => {
     assert.ok(s.tasks.some((t) => t.templateKey === "channel:shopify"));
   });
 });
+
+describe("security safeguards", () => {
+  async function activeStorefront() {
+    const store = new Store(null);
+    const app = createApp({ store });
+    await request(app).put("/api/vault/anthropic").set(json).send({ value: "sk-ant-x" }).expect(200);
+    await request(app).put("/api/vault/shopify_admin").set(json).send({ value: "s.myshopify.com\nshpat_x" }).expect(200);
+    await request(app).put("/api/channels").set(json).send({ channels: ["shopify"] }).expect(200);
+    await request(app).put("/api/economics").set(json).send({ salePriceCents: 2500, unitCostCents: 500, monthlyUnits: 100 }).expect(200);
+    await request(app).post("/api/agents/recommended").set(json).send({ roles: ["storefront"] }).expect(200);
+    const agent = store.get().agents[0]!;
+    await request(app).patch(`/api/agents/${agent.id}`).set(json).send({ inputs: { min_price: "20.00" }, status: "active" }).expect(200);
+    const token = (await request(app).post(`/api/agents/${agent.id}/token`).set(json).send({})).body.token as string;
+    return { app, store, agent, auth: { Authorization: `Bearer ${token}` } };
+  }
+
+  it("enforces the price floor on price changes and listings", async () => {
+    const { app, auth } = await activeStorefront();
+    const ask = (body: object) => request(app).post("/api/agent/v1/actions").set(auth).send(body).expect(201);
+    let r = (await ask({ action: "update_price" })).body.request;
+    assert.equal(r.status, "denied");
+    assert.match(r.reasons.join(" "), /priceCents/);
+    r = (await ask({ action: "update_price", priceCents: 1999 })).body.request;
+    assert.equal(r.status, "denied");
+    assert.match(r.reasons.join(" "), /below the price floor of \$20\.00/);
+    r = (await ask({ action: "update_price", priceCents: 2000 })).body.request;
+    assert.equal(r.status, "pending_approval", "price changes need approval by default");
+    assert.equal(r.priceCents, 2000);
+    r = (await ask({ action: "publish_listing", priceCents: 1500 })).body.request;
+    assert.equal(r.status, "denied");
+  });
+
+  it("estimates AI cost, records it, and stops agents at the monthly cap", async () => {
+    const { app, store, auth } = await activeStorefront();
+    await request(app).put("/api/guardrails").set(json).send({ aiMonthlyLimitCents: 500 }).expect(200);
+    await request(app).post("/api/agent/v1/usage").set(auth).send({ model: "gpt-unknown", inputTokens: 5 }).expect(400);
+    let u = (await request(app).post("/api/agent/v1/usage").set(auth).send({ model: "claude-opus-5-5", inputTokens: 500_000, outputTokens: 50_000 }).expect(201)).body;
+    assert.equal(u.costCents, 300, "500k in × $4/M + 50k out × $20/M = $3.00");
+    assert.equal(u.overLimit, false);
+    u = (await request(app).post("/api/agent/v1/usage").set(auth).send({ model: "other-model", costCents: 250 }).expect(201)).body;
+    assert.equal(u.monthCostCents, 550);
+    assert.equal(u.overLimit, true);
+    const r = (await request(app).post("/api/agent/v1/actions").set(auth).send({ action: "draft_listing" }).expect(201)).body.request;
+    assert.equal(r.status, "denied");
+    assert.match(r.reasons.join(" "), /AI usage budget/);
+    assert.equal(store.get().activity.filter((a) => a.message.startsWith("AI usage budget reached")).length, 1, "warned once");
+    const st = (await request(app).get("/api/state")).body as StateResponse;
+    assert.equal(st.finance.aiThisMonthCents, 550);
+    assert.equal(st.aiUsageDaily.reduce((s, d) => s + d.costCents, 0), 550);
+    const cfg = (await request(app).get("/api/agent/v1/config").set(auth)).body;
+    assert.equal(cfg.guardrails.ai.overLimit, true);
+    assert.equal(cfg.guardrails.priceFloorCents, 2000);
+  });
+
+  it("puts AI usage in the P&L", () => {
+    const p = computePnL({ funding: [], requests: [], agents: [], economics: ECON, period: "all", now: NOW, aiUsage: [{ at: NOW.toISOString(), costCents: 1234 }] });
+    assert.equal(p.aiUsage, 1234);
+    assert.equal(p.totalOpex, 1234 + p.fixedOverhead);
+  });
+
+  it("requires a password once one is set, without affecting agents", async () => {
+    const { app, auth } = await activeStorefront();
+    await request(app).put("/api/security/password").set(json).send({ newPassword: "short" }).expect(400);
+    const browser = request.agent(app);
+    await browser.put("/api/security/password").set(json).send({ newPassword: "correct horse battery" }).expect(200);
+    // This browser stays signed in; a different one is locked out.
+    await browser.get("/api/state").expect(200);
+    const locked = await request(app).get("/api/state").expect(401);
+    assert.equal(locked.body.loginRequired, true);
+    assert.equal((await request(app).get("/api/session")).body.passwordSet, true);
+    // Agents keep working with their own tokens.
+    await request(app).get("/api/agent/v1/config").set(auth).expect(200);
+
+    const other = request.agent(app);
+    await other.post("/api/login").set(json).send({ password: "wrong" }).expect(401);
+    await other.post("/api/login").set(json).send({ password: "correct horse battery" }).expect(200);
+    await other.get("/api/state").expect(200);
+    await other.post("/api/logout").set(json).send({}).expect(200);
+    await other.get("/api/state").expect(401);
+
+    // Changing it requires the current password and signs out other browsers.
+    await browser.put("/api/security/password").set(json).send({ currentPassword: "nope", newPassword: "another long one" }).expect(401);
+    await browser.put("/api/security/password").set(json).send({ currentPassword: "correct horse battery", newPassword: "another long one" }).expect(200);
+    await browser.get("/api/state").expect(200);
+
+    // Starting over keeps the password.
+    const st = (await browser.post("/api/reset").set(json).send({ confirm: "START OVER" }).expect(200)).body as StateResponse;
+    assert.equal(st.security.passwordSet, true);
+    // Remove it.
+    await browser.put("/api/security/password").set(json).send({ currentPassword: "another long one", newPassword: "" }).expect(200);
+    await request(app).get("/api/state").expect(200);
+  });
+
+  it("locks out password guessing", async () => {
+    const store = new Store(null);
+    const app = createApp({ store });
+    const b = request.agent(app);
+    await b.put("/api/security/password").set(json).send({ newPassword: "a very good password" }).expect(200);
+    const guesser = request.agent(app);
+    for (let i = 0; i < 5; i++) await guesser.post("/api/login").set(json).send({ password: `guess${i}` }).expect(401);
+    await guesser.post("/api/login").set(json).send({ password: "a very good password" }).expect(429);
+  });
+
+  it("never stores or returns the password itself", async () => {
+    const store = new Store(null);
+    const app = createApp({ store });
+    const b = request.agent(app);
+    const st = await b.put("/api/security/password").set(json).send({ newPassword: "super secret phrase" }).expect(200);
+    assert.ok(!JSON.stringify(st.body).includes("super secret phrase"));
+    assert.ok(!JSON.stringify(store.get()).includes("super secret phrase"));
+    assert.ok(!JSON.stringify(st.body).includes(store.get().security.passwordHash!), "the hash isn't sent either");
+  });
+});

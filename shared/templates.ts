@@ -119,8 +119,8 @@ export const AGENT_TEMPLATES: AgentTemplate[] = [
     ],
     actions: [
       { key: "draft_listing", label: "Draft a listing", spends: false },
-      { key: "publish_listing", label: "Publish a listing", spends: false, approvalByDefault: true },
-      { key: "update_price", label: "Update a price", spends: false },
+      { key: "publish_listing", label: "Publish a listing", spends: false, approvalByDefault: true, setsPrice: true },
+      { key: "update_price", label: "Update a price", spends: false, approvalByDefault: true, setsPrice: true },
       { key: "buy_photography", label: "Buy product photography", spends: true, category: "advertising" },
     ],
     defaults: { perTransactionLimitCents: 50000, dailySpendLimitCents: 50000, approvalThresholdCents: 10000 },

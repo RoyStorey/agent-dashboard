@@ -7,6 +7,8 @@ import { AUTO_DONE, DEFAULT_TASKS, channelTaskText, findTemplate, makeDefaultTas
 import type { ActivityEntry, ActivityLevel, DashboardState, DiscordSettings } from "../shared/types.ts";
 
 export const MAX_ACTIVITY = 2000;
+/** AI usage reports kept (older ones are dropped; monthly totals only need recent ones). */
+export const MAX_AI_USAGE = 20000;
 
 export const newId = (): string => randomUUID();
 export const newToken = (): string => `agt_${randomBytes(24).toString("hex")}`;
@@ -47,6 +49,7 @@ export function defaultState(): DashboardState {
       dailySpendLimitCents: null,
       monthlySpendLimitCents: null,
       approvalThresholdCents: 10000,
+      aiMonthlyLimitCents: null,
     },
     funding: [],
     requests: [],
@@ -55,6 +58,8 @@ export function defaultState(): DashboardState {
     discord: defaultDiscord(),
     allocation: { auto: true, reserveBps: 1500, weights: {} },
     research: [],
+    aiUsage: [],
+    security: { passwordHash: null, passwordSalt: null, passwordUpdatedAt: null },
   };
 }
 
@@ -98,6 +103,8 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
     },
     allocation: { ...base.allocation, ...raw.allocation, weights: { ...raw.allocation?.weights } },
     vault: { ...raw.vault },
+    aiUsage: Array.isArray(raw.aiUsage) ? raw.aiUsage : [],
+    security: { ...base.security, ...raw.security },
     // A research job cannot survive a restart: mark any that were running as failed.
     research: (raw.research ?? []).map((j) =>
       j.status === "running" ? { ...j, status: "error" as const, error: "Interrupted because the dashboard restarted. Run it again.", finishedAt: j.startedAt } : j,
@@ -147,7 +154,8 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
       }),
       actions: a.actions.map((x) => {
         const ta = tpl.actions.find((y) => y.key === x.key);
-        return ta?.category && !x.category ? { ...x, category: ta.category } : x;
+        if (!ta) return x;
+        return { ...x, ...(ta.category && !x.category ? { category: ta.category } : {}), ...(ta.setsPrice ? { setsPrice: true } : {}) };
       }),
     };
   });
@@ -310,6 +318,7 @@ export class Store {
     const result = fn(draft);
     autoCompleteTasks(draft);
     if (draft.activity.length > MAX_ACTIVITY) draft.activity = draft.activity.slice(-MAX_ACTIVITY);
+    if (draft.aiUsage.length > MAX_AI_USAGE) draft.aiUsage = draft.aiUsage.slice(-MAX_AI_USAGE);
     this.writeFile(draft);
     this.state = draft;
     const added = draft.activity.filter((a) => !before.has(a.id));

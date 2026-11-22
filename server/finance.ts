@@ -44,6 +44,17 @@ export function spentThisMonth(state: DashboardState, now: Date): number {
   return sumSince(state.requests, startOfMonth(now));
 }
 
+/** Estimated AI usage cost this calendar month, optionally for one agent. */
+export function aiThisMonth(state: DashboardState, now: Date, agentId?: string): number {
+  const t = startOfMonth(now).getTime();
+  let total = 0;
+  for (const u of state.aiUsage) {
+    if (agentId !== undefined && u.agentId !== agentId) continue;
+    if (new Date(u.at).getTime() >= t) total += u.costCents;
+  }
+  return total;
+}
+
 export function computeFinance(state: DashboardState, now: Date): FinanceSummary {
   let depositedCents = 0;
   let withdrawnCents = 0;
@@ -64,6 +75,7 @@ export function computeFinance(state: DashboardState, now: Date): FinanceSummary
       spentCents: spent,
       remainingCents: Math.max(0, a.budgetCents - spent),
       spentTodayCents: agentSpentToday(state, a.id, now),
+      aiThisMonthCents: aiThisMonth(state, now, a.id),
     };
   });
   const allocatedRemainingCents = agents.reduce((s, a) => s + a.remainingCents, 0);
@@ -79,6 +91,7 @@ export function computeFinance(state: DashboardState, now: Date): FinanceSummary
     unallocatedCents: cashBalanceCents - allocatedRemainingCents,
     spentTodayCents: spentToday(state, now),
     spentThisMonthCents: spentThisMonth(state, now),
+    aiThisMonthCents: aiThisMonth(state, now),
     profitCents: revenueCents - spentCents,
     agents,
   };

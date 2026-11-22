@@ -70,6 +70,8 @@ export interface ActionDef {
   approvalByDefault?: boolean;
   /** Where spending on this action lands in the profit & loss statement. */
   category?: SpendCategory;
+  /** True if this action sets a selling price; the dashboard enforces the price floor. */
+  setsPrice?: boolean;
 }
 
 export type AgentStatus = "draft" | "active" | "paused";
@@ -122,6 +124,30 @@ export interface GlobalGuardrails {
   monthlySpendLimitCents: Cents | null;
   /** Any spend at or above this amount needs owner approval. null = never by amount. */
   approvalThresholdCents: Cents | null;
+  /** Estimated AI model usage allowed per calendar month. null = no cap. */
+  aiMonthlyLimitCents: Cents | null;
+}
+
+/** One report of AI model usage (tokens) and its estimated cost. */
+export interface AiUsageEntry {
+  id: string;
+  at: string;
+  agentId: string | null;
+  label: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  webSearches: number;
+  costCents: Cents;
+}
+
+export interface SecuritySettings {
+  /** scrypt hash of the dashboard password (hex), or null when no password is set. */
+  passwordHash: string | null;
+  passwordSalt: string | null;
+  passwordUpdatedAt: string | null;
 }
 
 export type TaskStatus = "todo" | "done";
@@ -194,6 +220,8 @@ export interface ActionRequest {
   action: string;
   description: string;
   amountCents: Cents;
+  /** For price-setting actions: the price the agent wants to set. */
+  priceCents?: Cents | null;
   /** Set when completed; may be lower than amountCents. */
   actualAmountCents: Cents | null;
   status: RequestStatus;
@@ -335,6 +363,8 @@ export interface DashboardState {
   discord: DiscordSettings;
   allocation: AllocationSettings;
   research: ResearchJob[];
+  aiUsage: AiUsageEntry[];
+  security: SecuritySettings;
 }
 
 /* ---------- Computed views sent to the client ---------- */
@@ -345,6 +375,7 @@ export interface AgentFinance {
   spentCents: Cents;
   remainingCents: Cents;
   spentTodayCents: Cents;
+  aiThisMonthCents: Cents;
 }
 
 export interface FinanceSummary {
@@ -357,6 +388,7 @@ export interface FinanceSummary {
   unallocatedCents: Cents;
   spentTodayCents: Cents;
   spentThisMonthCents: Cents;
+  aiThisMonthCents: Cents;
   profitCents: Cents;
   agents: AgentFinance[];
 }
@@ -439,6 +471,11 @@ export interface StateResponse {
   discord: DiscordView;
   allocation: AllocationSettings;
   research: ResearchJob[];
+  /** Most recent usage reports (newest first). */
+  aiUsage: AiUsageEntry[];
+  /** AI cost per local day, covering all reports (for period totals). */
+  aiUsageDaily: Array<{ at: string; costCents: Cents }>;
+  security: { passwordSet: boolean };
   guardrails: GlobalGuardrails;
   funding: FundingEntry[];
   requests: ActionRequest[];

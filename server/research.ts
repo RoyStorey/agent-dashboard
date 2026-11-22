@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { betaTool } from "@anthropic-ai/sdk/helpers/beta/json-schema";
+import { ZERO_COUNTS, addCounts, countsFromAnthropicUsage, type UsageCounts } from "../shared/aiPricing.ts";
 import { formatCents } from "../shared/money.ts";
 import type { ProductIdea, ResearchBrief } from "../shared/types.ts";
 
@@ -8,6 +9,18 @@ export const RESEARCH_MODEL = "claude-opus-5-5";
 export interface ResearchResult {
   summary: string;
   ideas: ProductIdea[];
+  /** Tokens and searches used, for AI spend tracking. */
+  usage?: UsageCounts;
+}
+
+/** A failed run still used (and is billed for) some tokens; this carries them. */
+export class ResearchFailure extends Error {
+  constructor(
+    message: string,
+    public readonly usage: UsageCounts,
+  ) {
+    super(message);
+  }
 }
 
 /** Anything that can turn a brief into product ideas (the real one calls Claude; tests use a fake). */
@@ -159,8 +172,9 @@ export const anthropicResearch: ResearchRunner = async (brief, apiKey) => {
     },
   });
 
+  let usage: UsageCounts = ZERO_COUNTS;
   try {
-    const final = await client.beta.messages.toolRunner({
+    const runner = client.beta.messages.toolRunner({
       model: RESEARCH_MODEL,
       max_tokens: 16000,
       max_iterations: 12,
@@ -170,11 +184,17 @@ export const anthropicResearch: ResearchRunner = async (brief, apiKey) => {
       tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 12 }, submit],
       messages: [{ role: "user", content: researchPrompt(brief) }],
     });
-    if (out.result) return out.result;
-    if (final.stop_reason === "refusal") throw new Error("The model declined this research request. Try different interests.");
+    // Iterate message by message so every call's usage is counted, not just the last one.
+    let stopReason: string | null = null;
+    for await (const message of runner) {
+      usage = addCounts(usage, countsFromAnthropicUsage(message.usage));
+      stopReason = message.stop_reason;
+    }
+    if (out.result) return { ...out.result, usage };
+    if (stopReason === "refusal") throw new Error("The model declined this research request. Try different interests.");
     throw new Error("Research finished without returning ideas. Run it again.");
   } catch (err) {
-    if (out.result) return out.result;
-    throw new Error(describeError(err));
+    if (out.result) return { ...out.result, usage };
+    throw new ResearchFailure(describeError(err), usage);
   }
 };

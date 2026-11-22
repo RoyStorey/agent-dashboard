@@ -1,6 +1,6 @@
 import { unitBreakdown } from "./economics.ts";
 import { actionCategory } from "./templates.ts";
-import type { ActionRequest, Agent, Cents, FundingEntry, SpendCategory, UnitEconomics } from "./types.ts";
+import type { ActionRequest, Agent, AiUsageEntry, Cents, FundingEntry, SpendCategory, UnitEconomics } from "./types.ts";
 
 export type Period = "this_month" | "last_month" | "last_30" | "all";
 
@@ -65,6 +65,8 @@ export interface PnL {
   samples: Cents;
   software: Cents;
   other: Cents;
+  /** Estimated AI model usage reported by agents and research. */
+  aiUsage: Cents;
   fixedOverhead: Cents;
   totalOpex: Cents;
   netProfit: Cents;
@@ -104,6 +106,7 @@ export function computePnL(input: {
   economics: UnitEconomics;
   period: Period;
   now: Date;
+  aiUsage?: Pick<AiUsageEntry, "at" | "costCents">[];
 }): PnL {
   const { funding, requests, agents, economics, period, now } = input;
   const times = [...funding.map((f) => f.createdAt), ...requests.map((r) => r.createdAt)].map((t) => new Date(t).getTime());
@@ -161,6 +164,8 @@ export function computePnL(input: {
   const grossProfit = netSales - cogs;
 
   const fixedOverhead = Math.round((economics.fixedMonthlyCents * days) / 30);
+  let aiUsage = 0;
+  for (const u of input.aiUsage ?? []) if (inRange(u.at, start, end)) aiUsage += u.costCents;
   // When COGS is estimated from units, inventory purchases are an asset (cash), not an expense.
   const totalOpex =
     marketplaceFees +
@@ -169,6 +174,7 @@ export function computePnL(input: {
     spendByCategory.samples +
     spendByCategory.software +
     spendByCategory.other +
+    aiUsage +
     fixedOverhead;
   const netProfit = grossProfit - totalOpex;
 
@@ -193,6 +199,7 @@ export function computePnL(input: {
     samples: spendByCategory.samples,
     software: spendByCategory.software,
     other: spendByCategory.other,
+    aiUsage,
     fixedOverhead,
     totalOpex,
     netProfit,

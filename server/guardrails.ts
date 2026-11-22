@@ -1,7 +1,9 @@
 import { formatCents } from "../shared/money.ts";
 import type { Agent, DashboardState } from "../shared/types.ts";
-import { computeFinance, spentThisMonth, spentToday, agentSpentToday } from "./finance.ts";
-import { missingInputs } from "./inputs.ts";
+import { economicsComplete, unitBreakdown } from "../shared/economics.ts";
+import { parseDollars } from "../shared/money.ts";
+import { aiThisMonth, computeFinance, spentThisMonth, spentToday, agentSpentToday } from "./finance.ts";
+import { missingInputs, resolveInputs } from "./inputs.ts";
 
 export type Decision = "approved" | "pending_approval" | "denied";
 
@@ -13,6 +15,20 @@ export interface Evaluation {
 export interface SpendProposal {
   action: string;
   amountCents: number;
+  /** For price-setting actions: the price the agent wants to set. */
+  priceCents?: number | null;
+}
+
+/**
+ * The lowest price agents may set: the agent's "Lowest allowed sale price"
+ * if the owner (or auto-fill) set one, otherwise the plan's break-even price.
+ * null when neither is known.
+ */
+export function priceFloorCents(state: DashboardState, agent: Agent): number | null {
+  const typed = parseDollars(resolveInputs(state, agent).values.min_price ?? "");
+  if (typed !== null && typed > 0) return typed;
+  if (!economicsComplete(state.economics)) return null;
+  return unitBreakdown(state.economics).breakEvenPrice;
 }
 
 /**
@@ -32,6 +48,12 @@ export function hardLimitViolations(
   const ag = agent.guardrails;
 
   if (g.killSwitch) reasons.push("Kill switch is on: all agent activity is stopped.");
+  if (g.aiMonthlyLimitCents !== null) {
+    const used = aiThisMonth(state, now);
+    if (used >= g.aiMonthlyLimitCents) {
+      reasons.push(`This month's AI usage budget of ${formatCents(g.aiMonthlyLimitCents)} is used up (${formatCents(used)} so far).`);
+    }
+  }
   if (agent.status !== "active") reasons.push(`Agent is ${agent.status}, not active.`);
 
   const missing = missingInputs(state, agent);
@@ -42,6 +64,18 @@ export function hardLimitViolations(
     reasons.push(`Unknown action "${proposal.action}" for this agent.`);
   } else if (!ag.allowedActions.includes(proposal.action)) {
     reasons.push(`Action "${def.label}" is not allowed for this agent.`);
+  }
+
+  if (def?.setsPrice) {
+    const price = proposal.priceCents;
+    if (price === undefined || price === null) {
+      reasons.push(`Include the price you want to set ("priceCents") so it can be checked against the price floor.`);
+    } else {
+      const floor = priceFloorCents(state, agent);
+      if (floor !== null && price < floor) {
+        reasons.push(`Price ${formatCents(price)} is below the price floor of ${formatCents(floor)}; every sale would lose money.`);
+      }
+    }
   }
 
   const amount = proposal.amountCents;
@@ -103,6 +137,10 @@ export function approvalReasons(state: DashboardState, agent: Agent, proposal: S
   const at = agent.guardrails.approvalThresholdCents;
   if (amount > 0 && at !== null && amount >= at) {
     reasons.push(`Amount is at or above this agent's approval threshold of ${formatCents(at)}.`);
+  }
+  const def = agent.actions.find((a) => a.key === proposal.action);
+  if (def?.setsPrice && proposal.priceCents !== undefined && proposal.priceCents !== null && priceFloorCents(state, agent) === null) {
+    reasons.push("No price floor is known yet (enter sale price and costs on Financials), so a person must check this price.");
   }
   const gt = state.guardrails.approvalThresholdCents;
   if (amount > 0 && gt !== null && amount >= gt) {

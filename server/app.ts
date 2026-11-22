@@ -19,10 +19,13 @@ import { createAgent, toView } from "./agents.ts";
 import { maskWebhook, type DiscordNotifier } from "./discord.ts";
 import { autofillAgent, refreshSuggestedInputs, resolveInputs } from "./inputs.ts";
 import { registerSetupRoutes } from "./setupRoutes.ts";
+import { LoginLimiter, Sessions, clearedCookie, hashPassword, readCookie, sessionCookie, SESSION_COOKIE, verifyPassword } from "./auth.ts";
+import { aiThisMonth } from "./finance.ts";
+import { estimateCostCents } from "../shared/aiPricing.ts";
 import { anthropicResearch, type ResearchRunner } from "./research.ts";
 import { autoAllocate } from "./allocate.ts";
 import { computeFinance } from "./finance.ts";
-import { evaluate, hardLimitViolations } from "./guardrails.ts";
+import { evaluate, hardLimitViolations, priceFloorCents } from "./guardrails.ts";
 import { computeOwnerActions, computeReadiness, missingInputs } from "./readiness.ts";
 import { log, newId, newToken, type Store } from "./store.ts";
 import {
@@ -49,6 +52,8 @@ export interface AppOptions {
   research?: ResearchRunner;
   /** Posts activity to Discord. Optional (tests usually omit it). */
   notifier?: DiscordNotifier;
+  /** Signed-in browsers (only used when a dashboard password is set). */
+  sessions?: Sessions;
 }
 
 /** Parses a revenue report: either a net payout, or gross sales with optional refunds, fees and units. */
@@ -114,6 +119,17 @@ function maskVault(key: string, value: string): string {
   return v.length <= 8 ? "••••" : `••••${v.slice(-4)}`;
 }
 
+/** AI cost per local calendar day, so period totals stay exact without sending every report. */
+function dailyAiTotals(s: DashboardState): Array<{ at: string; costCents: number }> {
+  const byDay = new Map<string, number>();
+  for (const u of s.aiUsage) {
+    const d = new Date(u.at);
+    const key = new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString();
+    byDay.set(key, (byDay.get(key) ?? 0) + u.costCents);
+  }
+  return [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([at, costCents]) => ({ at, costCents }));
+}
+
 function hostnameOf(hostHeader: string): string {
   // Handles "localhost:4317", "127.0.0.1:4317" and "[::1]:4317".
   if (hostHeader.startsWith("[")) return hostHeader.slice(0, hostHeader.indexOf("]") + 1);
@@ -124,6 +140,8 @@ export function createApp(opts: AppOptions): express.Express {
   const { store } = opts;
   const now = opts.now ?? (() => new Date());
   const allowedHosts = new Set(opts.allowedHosts ?? ["localhost", "127.0.0.1", "[::1]"]);
+  const sessions = opts.sessions ?? new Sessions();
+  const limiter = new LoginLimiter();
 
   const app = express();
   app.disable("x-powered-by");
@@ -201,6 +219,12 @@ export function createApp(opts: AppOptions): express.Express {
           dailySpendLimitCents: agent.guardrails.dailySpendLimitCents,
           approvalThresholdCents: agent.guardrails.approvalThresholdCents,
         },
+        ai: {
+          monthlyLimitCents: state.guardrails.aiMonthlyLimitCents,
+          monthCostCents: aiThisMonth(state, t),
+          overLimit: state.guardrails.aiMonthlyLimitCents !== null && aiThisMonth(state, t) >= state.guardrails.aiMonthlyLimitCents,
+        },
+        priceFloorCents: priceFloorCents(state, agent),
         global: {
           perTransactionLimitCents: state.guardrails.perTransactionLimitCents,
           dailySpendLimitCents: state.guardrails.dailySpendLimitCents,
@@ -243,17 +267,19 @@ export function createApp(opts: AppOptions): express.Express {
     const action = str(body, "action", { max: 64, required: true }) as string;
     const description = str(body, "description", { max: 2000 }) ?? "";
     const amountCents = cents(body, "amountCents") ?? 0;
+    const priceCents = cents(body, "priceCents");
     const request = store.mutate((s) => {
       const agent = currentAgent(s, res);
       const t = now();
       touch(agent, t);
-      const ev = evaluate(s, agent, { action, amountCents }, t);
+      const ev = evaluate(s, agent, { action, amountCents, priceCents }, t);
       const r: ActionRequest = {
         id: newId(),
         agentId: agent.id,
         action,
         description,
         amountCents,
+        priceCents: priceCents ?? null,
         actualAmountCents: null,
         status: ev.decision,
         reasons: ev.reasons,
@@ -264,7 +290,7 @@ export function createApp(opts: AppOptions): express.Express {
         resultNote: "",
       };
       s.requests.push(r);
-      const money = amountCents > 0 ? ` for ${formatCents(amountCents)}` : "";
+      const money = (amountCents > 0 ? ` for ${formatCents(amountCents)}` : "") + (priceCents !== undefined ? ` at a price of ${formatCents(priceCents)}` : "");
       const label = actionLabel(agent, action);
       const extra = { agentId: agent.id, amountCents, fields: description ? [{ name: "Why", value: description }] : undefined };
       if (ev.decision === "approved") log(s, agent.name, "info", `Approved: ${label}${money}.`, t, { ...extra, kind: "request_approved" });
@@ -364,6 +390,39 @@ export function createApp(opts: AppOptions): express.Express {
     res.status(201).json({ entry });
   });
 
+  agentApi.post("/usage", (req, res) => {
+    const body = asBody(req.body);
+    const model = str(body, "model", { max: 100, required: true }) as string;
+    const label = str(body, "label", { max: 200 }) ?? "";
+    const counts = {
+      inputTokens: cents(body, "inputTokens") ?? 0,
+      outputTokens: cents(body, "outputTokens") ?? 0,
+      cacheReadTokens: cents(body, "cacheReadTokens") ?? 0,
+      cacheWriteTokens: cents(body, "cacheWriteTokens") ?? 0,
+      webSearches: cents(body, "webSearches") ?? 0,
+    };
+    const reported = cents(body, "costCents");
+    const costCents = reported ?? estimateCostCents(model, counts);
+    if (costCents === null) throw bad(`No price list for model "${model}". Include "costCents" with the cost you were charged.`);
+    const result = store.mutate((s) => {
+      const agent = currentAgent(s, res);
+      const t = now();
+      touch(agent, t);
+      const before = aiThisMonth(s, t);
+      s.aiUsage.push({ id: newId(), at: t.toISOString(), agentId: agent.id, label: label || agent.name, model, ...counts, costCents });
+      const after = before + costCents;
+      const limit = s.guardrails.aiMonthlyLimitCents;
+      if (limit !== null && before < limit && after >= limit) {
+        log(s, "System", "error", `AI usage budget reached: ${formatCents(after)} of ${formatCents(limit)} this month. Agent requests are now denied until next month or until you raise the cap on Guardrails.`, t, {
+          kind: "system",
+          title: "AI usage budget reached",
+        });
+      }
+      return { monthCostCents: after, limitCents: limit, overLimit: limit !== null && after >= limit, costCents };
+    });
+    res.status(201).json(result);
+  });
+
   agentApi.post("/report", (req, res) => {
     const body = asBody(req.body);
     const title = str(body, "title", { max: 200, required: true }) as string;
@@ -420,7 +479,80 @@ export function createApp(opts: AppOptions): express.Express {
         return;
       }
     }
+    // With a dashboard password set, everything except signing in needs a signed-in browser.
+    if (store.get().security.passwordHash && req.path !== "/session" && req.path !== "/login") {
+      if (!sessions.valid(readCookie(req, SESSION_COOKIE), now())) {
+        res.status(401).json({ error: "Sign in to the dashboard.", loginRequired: true });
+        return;
+      }
+    }
     next();
+  });
+
+  /* ---------- Sign-in ---------- */
+
+  owner.get("/session", (req, res) => {
+    const passwordSet = Boolean(store.get().security.passwordHash);
+    res.json({ passwordSet, signedIn: !passwordSet || sessions.valid(readCookie(req, SESSION_COOKIE), now()) });
+  });
+
+  owner.post("/login", (req, res) => {
+    const body = asBody(req.body);
+    const password = str(body, "password", { max: 200, required: true }) as string;
+    const sec = store.get().security;
+    if (!sec.passwordHash || !sec.passwordSalt) {
+      res.json({ ok: true });
+      return;
+    }
+    const who = req.ip ?? "local";
+    if (limiter.blocked(who, now())) throw new HttpError(429, "Too many wrong passwords. Wait 15 minutes and try again.");
+    if (!verifyPassword(password, sec.passwordSalt, sec.passwordHash)) {
+      limiter.fail(who, now());
+      throw new HttpError(401, "Wrong password.");
+    }
+    limiter.succeed(who);
+    res.set("Set-Cookie", sessionCookie(sessions.create(now()), req.secure)).json({ ok: true });
+  });
+
+  owner.post("/logout", (req, res) => {
+    sessions.revoke(readCookie(req, SESSION_COOKIE));
+    res.set("Set-Cookie", clearedCookie()).json({ ok: true });
+  });
+
+  owner.put("/security/password", (req, res) => {
+    const body = asBody(req.body);
+    const current = str(body, "currentPassword", { max: 200 }) ?? "";
+    const next = str(body, "newPassword", { max: 200 });
+    if (next === undefined) throw bad('"newPassword" is required (empty to remove the password).');
+    if (next !== "" && next.length < 10) throw bad("Use at least 10 characters.");
+    const sec = store.get().security;
+    const who = req.ip ?? "local";
+    if (sec.passwordHash && sec.passwordSalt) {
+      if (limiter.blocked(who, now())) throw new HttpError(429, "Too many wrong passwords. Wait 15 minutes and try again.");
+      if (!verifyPassword(current, sec.passwordSalt, sec.passwordHash)) {
+        limiter.fail(who, now());
+        throw new HttpError(401, "Your current password is wrong.");
+      }
+      limiter.succeed(who);
+    } else if (next === "") {
+      throw bad("No password is set.");
+    }
+    store.mutate((s) => {
+      const t = now();
+      if (next === "") {
+        s.security = { passwordHash: null, passwordSalt: null, passwordUpdatedAt: t.toISOString() };
+        log(s, "Owner", "warning", "Removed the dashboard password. Anyone using this computer can open the dashboard.", t);
+      } else {
+        const { hash, salt } = hashPassword(next);
+        s.security = { passwordHash: hash, passwordSalt: salt, passwordUpdatedAt: t.toISOString() };
+        log(s, "Owner", "success", `${sec.passwordHash ? "Changed" : "Set"} the dashboard password.`, t);
+      }
+    });
+    // Any other signed-in browser is signed out; this one stays signed in.
+    sessions.revokeAll();
+    if (next === "") res.set("Set-Cookie", clearedCookie());
+    else res.set("Set-Cookie", sessionCookie(sessions.create(now()), req.secure));
+    sendState(res);
   });
 
   function buildState(): StateResponse {
@@ -454,6 +586,9 @@ export function createApp(opts: AppOptions): express.Express {
       },
       allocation: s.allocation,
       research: s.research,
+      aiUsage: s.aiUsage.slice(-300).reverse(),
+      aiUsageDaily: dailyAiTotals(s),
+      security: { passwordSet: Boolean(s.security.passwordHash) },
       guardrails: s.guardrails,
       funding: [...s.funding].reverse(),
       requests: [...s.requests].reverse(),
@@ -797,6 +932,8 @@ export function createApp(opts: AppOptions): express.Express {
       const daily = centsOrNull(body, "dailySpendLimitCents");
       const monthly = centsOrNull(body, "monthlySpendLimitCents");
       const threshold = centsOrNull(body, "approvalThresholdCents");
+      const aiCap = centsOrNull(body, "aiMonthlyLimitCents");
+      if (aiCap !== undefined) g.aiMonthlyLimitCents = aiCap;
       if (per !== undefined) g.perTransactionLimitCents = per;
       if (daily !== undefined) g.dailySpendLimitCents = daily;
       if (monthly !== undefined) g.monthlySpendLimitCents = monthly;
@@ -807,7 +944,7 @@ export function createApp(opts: AppOptions): express.Express {
           kind: "system",
         });
       }
-      if ([per, daily, monthly, threshold].some((v) => v !== undefined)) log(s, "Owner", "info", "Updated global guardrails.", t);
+      if ([per, daily, monthly, threshold, aiCap].some((v) => v !== undefined)) log(s, "Owner", "info", "Updated global guardrails.", t);
     });
     sendState(res);
   });
@@ -858,7 +995,7 @@ export function createApp(opts: AppOptions): express.Express {
       if (r.status !== "pending_approval") throw new HttpError(409, `This request is already ${r.status}.`);
       const agent = findAgent(s, r.agentId);
       const t = now();
-      const problems = hardLimitViolations(s, agent, { action: r.action, amountCents: r.amountCents }, t);
+      const problems = hardLimitViolations(s, agent, { action: r.action, amountCents: r.amountCents, priceCents: r.priceCents }, t);
       if (problems.length > 0) throw new HttpError(409, `Cannot approve: ${problems.join(" ")}`);
       r.status = "approved";
       r.decidedAt = t.toISOString();

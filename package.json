@@ -16,7 +16,8 @@
     "serve": "npm run build && npm start",
     "test": "tsx --test \"server/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "agent:example": "tsx examples/claude-agent.ts"
+    "agent:example": "tsx examples/claude-agent.ts",
+    "reset-password": "tsx server/resetPassword.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.12.0",

@@ -123,7 +123,7 @@ export function routeEntry(e: ActivityEntry, state: DashboardState, dashboardUrl
 
 export function summaryPayload(state: DashboardState, now: Date): DiscordPayload {
   const f = computeFinance(state, now);
-  const m = computePnL({ funding: state.funding, requests: state.requests, agents: state.agents, economics: state.economics, period: "this_month", now });
+  const m = computePnL({ funding: state.funding, requests: state.requests, agents: state.agents, economics: state.economics, aiUsage: state.aiUsage, period: "this_month", now });
   const pending = state.requests.filter((r) => r.status === "pending_approval").length;
   const active = state.agents.filter((a) => a.status === "active").length;
   return {

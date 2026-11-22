@@ -6,11 +6,12 @@ import type { DashboardState, ResearchBrief, ResearchJob, UnitEconomics } from "
 import { createAgent } from "./agents.ts";
 import { applyRebalance, autoAllocate } from "./allocate.ts";
 import { isWebhookUrl, type DiscordNotifier } from "./discord.ts";
-import { computeFinance } from "./finance.ts";
+import { aiThisMonth, computeFinance } from "./finance.ts";
 import { CHANNELS, channelNames, detectChannels, findChannel } from "../shared/channels.ts";
 import { syncChannelTasks } from "../shared/templates.ts";
 import { autofillAgent, missingInputs, refreshSuggestedInputs, suggestValue } from "./inputs.ts";
-import type { ResearchRunner } from "./research.ts";
+import { RESEARCH_MODEL, ResearchFailure, type ResearchRunner } from "./research.ts";
+import { estimateCostCents, type UsageCounts } from "../shared/aiPricing.ts";
 import { defaultState, log, newId, type Store } from "./store.ts";
 import { HttpError, asBody, bad, bool, cents, obj, str, strArray, type Body } from "./validate.ts";
 
@@ -342,6 +343,7 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
     const t = now();
     const backup = store.createBackup("before-start-over", t);
     const fresh = defaultState();
+    fresh.security = structuredClone(old.security); // starting over never removes the dashboard password
     if (keepCredentials) fresh.vault = structuredClone(old.vault);
     log(
       fresh,
@@ -363,6 +365,7 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
       throw new HttpError(404, err instanceof Error ? err.message : "Backup not found.");
     }
     const t = now();
+    restored.security = structuredClone(store.get().security); // keep today's password, not the backup's
     const safety = store.createBackup("before-restore", t);
     log(restored, "Owner", "warning", `Restored backup ${name}. The data from just before the restore is saved as ${safety}.`, t);
     store.replace(restored);
@@ -391,6 +394,10 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
     const apiKey = state.vault.anthropic?.value.trim();
     if (!apiKey) throw bad("Paste your Anthropic API key on the Credentials page first. Research runs on Claude.");
     if (state.research.some((j) => j.status === "running")) throw new HttpError(409, "Research is already running.");
+    const aiCap = state.guardrails.aiMonthlyLimitCents;
+    if (aiCap !== null && aiThisMonth(state, now()) >= aiCap) {
+      throw bad(`This month's AI usage budget of ${formatCents(aiCap)} is used up. Raise it on Guardrails to run research.`);
+    }
 
     const job: ResearchJob = {
       id: newId(),
@@ -417,9 +424,15 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
         j.finishedAt = now().toISOString();
       });
     };
+    const recordUsage = (s: DashboardState, usage: UsageCounts | undefined) => {
+      if (!usage) return;
+      const cost = estimateCostCents(RESEARCH_MODEL, usage) ?? 0;
+      s.aiUsage.push({ id: newId(), at: now().toISOString(), agentId: null, label: "Product research", model: RESEARCH_MODEL, ...usage, costCents: cost });
+    };
     ctx.research(brief, apiKey).then(
       (result) =>
         finish((j, s) => {
+          recordUsage(s, result.usage);
           j.status = "done";
           j.summary = result.summary;
           j.ideas = result.ideas;
@@ -429,6 +442,7 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
         }),
       (err: unknown) =>
         finish((j, s) => {
+          recordUsage(s, err instanceof ResearchFailure ? err.usage : undefined);
           j.status = "error";
           j.error = err instanceof Error ? err.message : String(err);
           log(s, "System", "error", `Product research failed: ${j.error}`, now());

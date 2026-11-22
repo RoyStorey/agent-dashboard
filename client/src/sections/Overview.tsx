@@ -9,7 +9,7 @@ import { AgentStatusBadge } from "./Agents.tsx";
 
 export function Overview({ state, go }: SectionProps) {
   const f = state.finance;
-  const m = computePnL({ funding: state.funding, requests: state.requests, agents: state.agents, economics: state.economics, period: "this_month", now: new Date(state.serverTime) });
+  const m = computePnL({ funding: state.funding, requests: state.requests, agents: state.agents, economics: state.economics, aiUsage: state.aiUsageDaily, period: "this_month", now: new Date(state.serverTime) });
   const setupLeft = setupSteps(state).filter((x) => !x.done && !x.optional).length;
   const blockers = state.ownerActions.filter((a) => a.severity === "blocker").length;
   const tasksDone = state.tasks.filter((t) => t.status === "done").length;

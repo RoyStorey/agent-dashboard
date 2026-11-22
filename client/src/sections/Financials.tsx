@@ -16,8 +16,8 @@ const tone = (c: number) => (c > 0 ? "tone-good" : c < 0 ? "tone-bad" : "");
 export function Financials({ state, dash }: SectionProps) {
   const [period, setPeriod] = useState<Period>("this_month");
   const now = new Date(state.serverTime);
-  const p = computePnL({ funding: state.funding, requests: state.requests, agents: state.agents, economics: state.economics, period, now });
-  const last30 = computePnL({ funding: state.funding, requests: state.requests, agents: state.agents, economics: state.economics, period: "last_30", now });
+  const p = computePnL({ funding: state.funding, requests: state.requests, agents: state.agents, economics: state.economics, aiUsage: state.aiUsageDaily, period, now });
+  const last30 = computePnL({ funding: state.funding, requests: state.requests, agents: state.agents, economics: state.economics, aiUsage: state.aiUsageDaily, period: "last_30", now });
   const cash = state.finance.cashBalanceCents;
   const runwayDays = last30.avgDailySpend > 0 ? Math.floor(cash / last30.avgDailySpend) : null;
 
