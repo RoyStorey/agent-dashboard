@@ -396,6 +396,8 @@ export interface ProductIdea {
   risks: string[];
   keywords: string[];
   sources: Array<{ title: string; url: string }>;
+  /** A photo of the product the research actually saw, or "" (older results may not have it). */
+  imageUrl?: string;
 }
 
 export interface ResearchJob {

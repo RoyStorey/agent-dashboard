@@ -11,6 +11,8 @@ import { DiscordNotifier, routeEntry, type DiscordPayload } from "./discord.ts";
 import { autofillAgent, resolveInputs } from "./inputs.ts";
 import type { ResearchRunner } from "./research.ts";
 import { SHOPIFY_API_VERSION, ShopifyService, parseShopifyCredential } from "./shopify.ts";
+import { AddressSearch } from "./address.ts";
+import { safeImageUrl } from "./research.ts";
 import { defaultState, migrate, newId, Store } from "./store.ts";
 
 const NOW = new Date(2026, 10, 22, 12, 0, 0);
@@ -1065,5 +1067,72 @@ describe("Connect Shopify", () => {
     await request(app).put("/api/fulfillment").set(json).send({ mode: "self" }).expect(200);
     await shopify.tick();
     assert.equal(store.get().shipments.length, 2);
+  });
+});
+
+describe("address suggestions", () => {
+  const feature = (p: Record<string, string>) => ({ properties: p });
+  function search(features: unknown[], ok = true) {
+    const urls: string[] = [];
+    const s = new AddressSearch(async (url) => {
+      urls.push(url);
+      return { ok, status: ok ? 200 : 503, json: async () => ({ features }) };
+    });
+    return { s, urls };
+  }
+
+  it("formats US addresses with state abbreviations", async () => {
+    const { s, urls } = search([
+      feature({ housenumber: "123", street: "Main Street", city: "Lansing", state: "Michigan", postcode: "48933", country: "United States", countrycode: "US", type: "house" }),
+    ]);
+    const r = await s.suggest("123 Main St Lansing");
+    assert.deepEqual(r, [{ label: "123 Main Street, Lansing, MI 48933", lines: ["123 Main Street", "Lansing, MI 48933"], needsNumber: false }]);
+    assert.match(urls[0]!, /^https:\/\/photon\.komoot\.io\/api\/\?q=123\+Main\+St\+Lansing&limit=6&lang=en$/);
+  });
+
+  it("keeps the house number you typed when the map only knows the street", async () => {
+    const { s } = search([feature({ name: "Elm Road", type: "street", city: "Okemos", state: "Michigan", postcode: "48864", countrycode: "US" })]);
+    const [r] = await s.suggest("4471 Elm Rd Okemos");
+    assert.deepEqual(r!.lines, ["4471 Elm Road", "Okemos, MI 48864"]);
+    const { s: s2 } = search([feature({ name: "Elm Road", type: "street", city: "Okemos", state: "Michigan", postcode: "48864", countrycode: "US" })]);
+    const [r2] = await s2.suggest("Elm Rd Okemos");
+    assert.equal(r2!.needsNumber, true, "flags that a house number is still needed");
+  });
+
+  it("adds the country for addresses outside the US, skips incomplete results and duplicates", async () => {
+    const { s } = search([
+      feature({ housenumber: "1", street: "King St W", city: "Toronto", state: "Ontario", postcode: "M5H 1A1", country: "Canada", countrycode: "CA" }),
+      feature({ housenumber: "1", street: "King St W", city: "Toronto", state: "Ontario", postcode: "M5H 1A1", country: "Canada", countrycode: "CA" }),
+      feature({ name: "Somewhere", countrycode: "US" }),
+    ]);
+    const r = await s.suggest("1 King St W Toronto");
+    assert.equal(r.length, 1);
+    assert.deepEqual(r[0]!.lines, ["1 King St W", "Toronto, Ontario M5H 1A1", "Canada"]);
+  });
+
+  it("asks nothing for very short input, caches repeats, and reports outages", async () => {
+    const { s, urls } = search([]);
+    assert.deepEqual(await s.suggest("12"), []);
+    await s.suggest("12 Oak Ave");
+    await s.suggest("12  oak ave");
+    assert.equal(urls.length, 1, "same search isn't sent twice");
+    const store = new Store(null);
+    const down = search([], false);
+    const app = createApp({ store, addressSearch: down.s });
+    const r = await request(app).get("/api/address/suggest").query({ q: "12 Oak Ave" }).expect(502);
+    assert.match(r.body.error, /Type the address in yourself/);
+  });
+});
+
+describe("research product photos", () => {
+  it("keeps only safe, public https photo links", () => {
+    assert.equal(safeImageUrl("https://m.media-amazon.com/images/I/71abc.jpg"), "https://m.media-amazon.com/images/I/71abc.jpg");
+    assert.equal(safeImageUrl("http://example.com/a.jpg"), "", "not https");
+    assert.equal(safeImageUrl("https://localhost/a.jpg"), "");
+    assert.equal(safeImageUrl("https://192.168.1.5/a.jpg"), "");
+    assert.equal(safeImageUrl("https://[::1]/a.jpg"), "");
+    assert.equal(safeImageUrl("javascript:alert(1)"), "");
+    assert.equal(safeImageUrl(""), "");
+    assert.equal(safeImageUrl(42), "");
   });
 });

@@ -1091,3 +1091,61 @@ ol.steps {
     display: none;
   }
 }
+
+.suggestions {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.15);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.suggestions li {
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.suggestions li.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.product-photo {
+  width: 132px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.product-photo img,
+.product-photo > span.muted {
+  width: 132px;
+  height: 132px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.product-photo img {
+  object-fit: contain;
+  background: #fff;
+}
+
+.product-photo > span.muted {
+  display: grid;
+  place-items: center;
+  padding: 8px;
+}

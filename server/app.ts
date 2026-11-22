@@ -21,6 +21,7 @@ import { autofillAgent, refreshSuggestedInputs, resolveInputs } from "./inputs.t
 import { registerSetupRoutes } from "./setupRoutes.ts";
 import { logQueued, parseShipment } from "./shippingInput.ts";
 import { ShopifyService } from "./shopify.ts";
+import { AddressSearch } from "./address.ts";
 import { lowSupplies } from "../shared/shipping.ts";
 import { LoginLimiter, Sessions, clearedCookie, hashPassword, readCookie, sessionCookie, SESSION_COOKIE, verifyPassword } from "./auth.ts";
 import { aiThisMonth } from "./finance.ts";
@@ -59,6 +60,8 @@ export interface AppOptions {
   sessions?: Sessions;
   /** Shopify connection (order import). */
   shopify?: ShopifyService;
+  /** Address suggestions as you type. */
+  addressSearch?: AddressSearch;
 }
 
 /** Parses a revenue report: either a net payout, or gross sales with optional refunds, fees and units. */
@@ -665,6 +668,16 @@ export function createApp(opts: AppOptions): express.Express {
   };
 
   owner.get("/state", (_req, res) => sendState(res));
+
+  const addressSearch = opts.addressSearch ?? new AddressSearch();
+  owner.get("/address/suggest", async (req, res) => {
+    const q = typeof req.query.q === "string" ? req.query.q.slice(0, 200) : "";
+    try {
+      res.json({ suggestions: await addressSearch.suggest(q) });
+    } catch {
+      res.status(502).json({ error: "Address suggestions are unavailable right now. Type the address in yourself." });
+    }
+  });
   owner.get("/templates", (_req, res) => {
     res.json({ templates: AGENT_TEMPLATES });
   });

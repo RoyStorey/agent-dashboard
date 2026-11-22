@@ -1,3 +1,4 @@
+import { AddressField } from "../components/AddressField.tsx";
 import { useEffect, useState } from "react";
 import { FULFILLMENT_LABEL, lowSupplies, pickList } from "../../../shared/shipping.ts";
 import type { FulfillmentMode, Shipment, SupplyItem } from "../../../shared/types.ts";
@@ -319,9 +320,7 @@ function AddOrder({ state, dash }: Pick<SectionProps, "state" | "dash">) {
             <input id="o-qty" inputMode="numeric" value={f.qty} onChange={(e) => setF({ ...f, qty: e.target.value })} />
           </Field>
         </div>
-        <Field label="Shipping address" htmlFor="o-addr" required>
-          <textarea id="o-addr" rows={3} value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} placeholder={"Street\nCity, State ZIP"} />
-        </Field>
+        <AddressField id="o-addr" label="Shipping address" value={f.address} onChange={(v) => setF({ ...f, address: v })} />
         <div className="form-grid">
           <Field label="Pack in" htmlFor="o-pack">
             <input id="o-pack" value={f.packaging} onChange={(e) => setF({ ...f, packaging: e.target.value })} />

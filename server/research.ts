@@ -65,7 +65,23 @@ export function sanitizeIdea(raw: unknown): ProductIdea | null {
     risks: strList(r.risks),
     keywords: strList(r.keywords, 15),
     sources,
+    imageUrl: safeImageUrl(r.image_url),
   };
+}
+
+/** Only public https links, so a bad or local address never reaches the page. */
+export function safeImageUrl(v: unknown): string {
+  if (typeof v !== "string" || v.length > 1000) return "";
+  let u: URL;
+  try {
+    u = new URL(v.trim());
+  } catch {
+    return "";
+  }
+  if (u.protocol !== "https:") return "";
+  const host = u.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".local") || host.endsWith(".internal") || /^[\d.]+$/.test(host) || host.includes(":")) return "";
+  return u.toString();
 }
 
 const IDEA_SCHEMA = {
@@ -88,6 +104,11 @@ const IDEA_SCHEMA = {
     compliance: { type: "array", items: { type: "string" }, description: "Certifications/regulations required" },
     risks: { type: "array", items: { type: "string" } },
     keywords: { type: "array", items: { type: "string" }, description: "Search keywords buyers use" },
+    image_url: {
+      type: "string",
+      description:
+        "Direct link to a photo of this kind of product (an image file, e.g. ending in .jpg, .png or .webp) that you actually saw in search results or on a product page. Use an empty string if you did not see one; never make one up.",
+    },
     sources: {
       type: "array",
       items: {
@@ -116,6 +137,7 @@ const IDEA_SCHEMA = {
     "compliance",
     "risks",
     "keywords",
+    "image_url",
     "sources",
   ],
   additionalProperties: false,
@@ -132,6 +154,8 @@ My situation:
 - Where I sell from / to: ${brief.location || "United States"}
 
 Use web search to check current demand, prices, competition and supplier costs. Prefer niches where a new seller can win (weak listings, unhappy reviews, rising demand), the product is small and light, and safety compliance is manageable. Every idea's startup cost must fit within my budget.
+
+For each idea, include a direct link to a product photo if you saw one, so I can see what it looks like (leave it empty rather than guess).
 
 When you are done, call submit_product_ideas once with 3 to 5 ideas ranked best first. Use realistic numbers from your research; all money in US cents, fees in basis points. Include the source URLs you relied on.`;
 }

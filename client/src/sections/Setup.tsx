@@ -1,3 +1,4 @@
+import { AddressField } from "../components/AddressField.tsx";
 import { useState, type ReactNode } from "react";
 import { economicsComplete } from "../../../shared/economics.ts";
 import { formatCents } from "../../../shared/money.ts";
@@ -192,9 +193,7 @@ export function Setup({ state, dash, go }: SectionProps) {
             <Field label="Your email" htmlFor="s-email">
               <input id="s-email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
             </Field>
-            <Field label="Shipping address for samples" htmlFor="s-addr">
-              <textarea id="s-addr" value={address} onChange={(e) => setAddress(e.target.value)} rows={2} />
-            </Field>
+            <AddressField id="s-addr" label="Shipping address for samples" value={address} onChange={setAddress} rows={2} />
           </div>
           <div>
             <button className="btn btn-primary btn-sm" type="submit" disabled={!email.trim() || !address.trim()}>

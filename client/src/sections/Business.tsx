@@ -1,3 +1,4 @@
+import { AddressField } from "../components/AddressField.tsx";
 import { useEffect, useState } from "react";
 import { EMPTY_ECONOMICS, formatBps, unitBreakdown } from "../../../shared/economics.ts";
 import { formatCents } from "../../../shared/money.ts";
@@ -125,9 +126,7 @@ function OwnerDetails({ state, dash }: Pick<SectionProps, "state" | "dash">) {
             <input id="o-email" value={draft.ownerEmail} onChange={(e) => setDraft({ ...draft, ownerEmail: e.target.value })} placeholder="you@example.com" />
           </Field>
         </div>
-        <Field label="Shipping address for samples" htmlFor="o-addr">
-          <textarea id="o-addr" value={draft.shippingAddress} onChange={(e) => setDraft({ ...draft, shippingAddress: e.target.value })} rows={3} />
-        </Field>
+        <AddressField id="o-addr" label="Shipping address for samples" value={draft.shippingAddress} onChange={(v) => setDraft({ ...draft, shippingAddress: v })} />
         <div className="form-actions">
           <button type="submit" className="btn btn-primary" disabled={!dirty}>
             Save details
@@ -212,6 +211,22 @@ function Research({ state, dash }: SectionProps) {
   );
 }
 
+/** The photo the research found, or a placeholder when there isn't one (or it fails to load). */
+function ProductPhoto({ idea }: { idea: ProductIdea }) {
+  const [failed, setFailed] = useState(false);
+  const src = idea.imageUrl && !failed ? idea.imageUrl : null;
+  return (
+    <div className="product-photo">
+      {src ? (
+        <img src={src} alt={idea.product} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+      ) : (
+        <span className="muted">No photo found. Use “See pictures”.</span>
+      )}
+      {src && <span className="help">Example photo from {hostOf(src)}</span>}
+    </div>
+  );
+}
+
 function hostOf(url: string): string {
   try {
     return new URL(url).hostname;
@@ -278,9 +293,22 @@ function ResearchResults({ job, state, dash, defaultOpen }: { job: ResearchJob; 
                     </button>
                   )}
                 </div>
-                <div>
-                  <strong>{idea.product}</strong>
-                  <div className="muted">{idea.niche}</div>
+                <div className="row" style={{ alignItems: "flex-start", flexWrap: "nowrap" }}>
+                  <ProductPhoto idea={idea} />
+                  <div className="stack" style={{ gap: 6, minWidth: 0 }}>
+                    <div>
+                      <strong>{idea.product}</strong>
+                      <div className="muted">{idea.niche}</div>
+                    </div>
+                    <div className="row">
+                      <ExtLink href={`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(idea.product)}`} className="link-btn">
+                        See pictures
+                      </ExtLink>
+                      <ExtLink href={`https://www.amazon.com/s?k=${encodeURIComponent(idea.product)}`} className="link-btn">
+                        See listings
+                      </ExtLink>
+                    </div>
+                  </div>
                 </div>
                 <div className="kv">
                   <div>
