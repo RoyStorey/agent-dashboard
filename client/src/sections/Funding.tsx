@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { canSpend, defaultWeight, planAllocation, planRebalance } from "../../../shared/allocation.ts";
+import { RECOMMENDED_RESERVE_BPS, canSpend, defaultWeight, planAllocation, planRebalance, setupOf } from "../../../shared/allocation.ts";
 import { formatBps } from "../../../shared/economics.ts";
 import { formatCents } from "../../../shared/money.ts";
 import type { AgentView, FundingType } from "../../../shared/types.ts";
@@ -66,8 +66,10 @@ function Allocation({ state, dash }: Pick<SectionProps, "state" | "dash">) {
     if (w.trim() !== "" && Number.isFinite(n) && n >= 0) draftWeights[id] = n;
   }
   const settings = { ...a, reserveBps: reserve, weights: draftWeights };
-  const rebalance = planRebalance({ agents: state.agents, settings, cashBalanceCents: f.cashBalanceCents, finance: f.agents });
-  const distribute = planAllocation({ agents: state.agents, settings, availableCents: f.unallocatedCents, cashBalanceCents: f.cashBalanceCents });
+  const setup = setupOf(state.business);
+  const rebalance = planRebalance({ agents: state.agents, settings, cashBalanceCents: f.cashBalanceCents, finance: f.agents, setup });
+  const distribute = planAllocation({ agents: state.agents, settings, availableCents: f.unallocatedCents, cashBalanceCents: f.cashBalanceCents, setup });
+  const customized = Object.keys(a.weights).length > 0 || a.reserveBps !== RECOMMENDED_RESERVE_BPS;
   const dirty = reserve !== a.reserveBps || Object.keys(weights).length > 0;
   const saveShares = () =>
     api.updateAllocation({
@@ -95,9 +97,28 @@ function Allocation({ state, dash }: Pick<SectionProps, "state" | "dash">) {
         New money is split by each agent's share below, keeping a cash reserve untouched. Change any budget by hand at any time; auto-allocation only adds to budgets, so your changes are kept. “Rebalance” re-splits all unspent money to match the shares.
       </p>
       <div className="form-grid">
-        <Field label="Cash reserve (never allocated)" help={`Currently ${formatCents(rebalance.reserveCents)} of ${formatCents(f.cashBalanceCents)} cash`}>
+        <Field
+          label="Cash reserve (never allocated)"
+          help={`Currently ${formatCents(rebalance.reserveCents)} of ${formatCents(f.cashBalanceCents)} cash${reserve !== RECOMMENDED_RESERVE_BPS ? ` · recommended ${RECOMMENDED_RESERVE_BPS / 100}%` : ""}`}
+        >
           <PercentInput value={reserve} onChange={setReserve} ariaLabel="Reserve percent" />
         </Field>
+        <div className="field" style={{ justifyContent: "flex-end" }}>
+          <button
+            className="btn"
+            disabled={!customized && !dirty}
+            title="Shares are starting points per job, adjusted for how you ship and where you mainly sell"
+            onClick={() => {
+              if (!window.confirm("Reset every share and the cash reserve to the recommended settings? Budgets change only when you rebalance.")) return;
+              setWeights({});
+              setReserve(RECOMMENDED_RESERVE_BPS);
+              void dash.run(() => api.resetAllocation(), "Shares reset to recommended. Click Rebalance to apply them to budgets.");
+            }}
+          >
+            Reset to recommended
+          </button>
+          <span className="help">{customized || dirty ? "Some shares differ from the recommendation." : "Using the recommended shares."}</span>
+        </div>
       </div>
       <div className="table-wrap">
         <table>
@@ -117,7 +138,9 @@ function Allocation({ state, dash }: Pick<SectionProps, "state" | "dash">) {
               const af = f.agents.find((x) => x.agentId === ag.id);
               const line = rebalance.lines.find((l) => l.agentId === ag.id);
               const spends = canSpend(ag);
-              const current = a.weights[ag.id] ?? defaultWeight(ag);
+              const recommended = defaultWeight(ag, setup);
+              const current = a.weights[ag.id] ?? recommended;
+              const shown = Number(weights[ag.id] ?? current);
               return (
                 <tr key={ag.id}>
                   <td>
@@ -137,6 +160,7 @@ function Allocation({ state, dash }: Pick<SectionProps, "state" | "dash">) {
                     ) : (
                       <span className="muted">—</span>
                     )}
+                    {spends && shown !== recommended && <div className="help">recommended {recommended}</div>}
                   </td>
                   <td className="right num">{line && line.shareBps > 0 ? formatBps(line.shareBps, 0) : "—"}</td>
                   <td className="right num">{formatCents(af?.spentCents ?? 0)}</td>

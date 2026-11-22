@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import request from "supertest";
-import { planAllocation, planRebalance } from "../shared/allocation.ts";
+import { planAllocation, planRebalance, recommendedWeight } from "../shared/allocation.ts";
 import { bpsToInput, breakEvenUnits, parsePercent, project, unitBreakdown } from "../shared/economics.ts";
 import { computePnL } from "../shared/pnl.ts";
 import type { ActionRequest, ActivityEntry, DashboardState, StateResponse, UnitEconomics } from "../shared/types.ts";
@@ -1134,5 +1134,37 @@ describe("research product photos", () => {
     assert.equal(safeImageUrl("javascript:alert(1)"), "");
     assert.equal(safeImageUrl(""), "");
     assert.equal(safeImageUrl(42), "");
+  });
+});
+
+describe("recommended budget shares", () => {
+  it("fit how you ship and where you mainly sell", () => {
+    const inv = createAgent("inventory", undefined, NOW);
+    const mkt = createAgent("marketing", undefined, NOW);
+    assert.equal(recommendedWeight(inv).weight, 15);
+    assert.equal(recommendedWeight(inv, { fulfillmentMode: "self", primaryChannel: null }).weight, 10);
+    assert.equal(recommendedWeight(mkt, { fulfillmentMode: null, primaryChannel: "shopify" }).weight, 25);
+    assert.equal(recommendedWeight(mkt, { fulfillmentMode: null, primaryChannel: "etsy" }).weight, 15);
+    assert.equal(recommendedWeight(mkt, { fulfillmentMode: null, primaryChannel: "amazon" }).weight, 20);
+  });
+
+  it("reset clears your changes, and rebalancing then uses the recommendation for your setup", async () => {
+    const store = new Store(null);
+    const app = createApp({ store });
+    await request(app).put("/api/channels").set(json).send({ channels: ["shopify"] }).expect(200);
+    await request(app).post("/api/agents/recommended").set(json).send({ roles: ["sourcing", "marketing"] }).expect(200);
+    await request(app).post("/api/funding").set(json).send({ type: "deposit", amountCents: 100000 }).expect(200);
+    const [sourcing, marketing] = store.get().agents;
+    await request(app).put("/api/allocation").set(json).send({ reserveBps: 0, weights: { [sourcing!.id]: 1, [marketing!.id]: 1 } }).expect(200);
+    await request(app).post("/api/allocation/rebalance").set(json).send({}).expect(200);
+    assert.equal(store.get().agents[0]!.budgetCents, 50000);
+    const st = (await request(app).post("/api/allocation/reset").set(json).send({}).expect(200)).body as StateResponse;
+    assert.deepEqual(st.allocation.weights, {});
+    assert.equal(st.allocation.reserveBps, 1500);
+    await request(app).post("/api/allocation/rebalance").set(json).send({}).expect(200);
+    // 85,000 split 45 : 25 (Shopify needs more ads).
+    const s = store.get().agents;
+    assert.equal(s[0]!.budgetCents, Math.round((85000 * 45) / 70));
+    assert.equal(s[0]!.budgetCents + s[1]!.budgetCents, 85000);
   });
 });

@@ -82,6 +82,7 @@ export const api = {
   autofill: (overwrite: boolean) => call<StateResponse>("POST", "/api/agents/autofill", { overwrite }),
   recommendedGuardrails: () => call<StateResponse>("POST", "/api/guardrails/recommended"),
   updateAllocation: (a: Record<string, unknown>) => call<StateResponse>("PUT", "/api/allocation", a),
+  resetAllocation: () => call<StateResponse>("POST", "/api/allocation/reset"),
   distribute: () => call<StateResponse>("POST", "/api/allocation/distribute"),
   rebalance: () => call<StateResponse>("POST", "/api/allocation/rebalance"),
   updateDiscord: (d: Record<string, unknown>) => call<StateResponse>("PUT", "/api/discord", d),

@@ -94,7 +94,7 @@ All money is stored as whole cents. Daily and monthly caps use calendar days and
 - Money is stored as whole cents and percentages as basis points (1500 = 15.00%), so totals are exact.
 - **Per unit:** net sales = price − refunds (return rate × price). Landed cost = supplier cost + freight + packaging. Gross profit = net sales − landed cost. Contribution = gross profit − marketplace fee − payment fee − fulfillment − ads. Returned units are assumed unsellable and fees are assumed not refunded, which is the conservative case.
 - **P&L:** COGS = units sold × planned landed cost. If no units have been reported, COGS falls back to inventory purchased. Spending is categorized by action (inventory, samples, shipping, advertising, refunds, software, other). Fixed overhead from the plan is prorated by days.
-- **Allocation:** new money above the reserve is split by weight with exact cents (largest remainder). Defaults: Sourcing 45, Marketing 20, Inventory 15, Finance 7, Storefront 5, Customer Service 5, Research 3. Rebalancing never sets a budget below what an agent has already spent.
+- **Allocation:** new money above the reserve is split by weight with exact cents (largest remainder). Recommended shares: Sourcing 45, Marketing 20, Inventory 15, Finance 7, Storefront 5, Customer Service 5, Research 3. They adjust to your setup: Inventory 10 when you ship yourself, Marketing 25 when Shopify is your main channel and 15 for Etsy. These are rules of thumb for a new store, not a calculation from your data. "Reset to recommended" on Funding puts every share and the 15% reserve back. Rebalancing never sets a budget below what an agent has already spent.
 
 ## Data and security
 

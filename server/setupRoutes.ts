@@ -10,6 +10,7 @@ import { aiThisMonth, computeFinance } from "./finance.ts";
 import { CHANNELS, channelNames, detectChannels, findChannel } from "../shared/channels.ts";
 import { syncChannelTasks } from "../shared/templates.ts";
 import { FULFILLMENT_LABEL, defaultSupplies } from "../shared/shipping.ts";
+import { RECOMMENDED_RESERVE_BPS } from "../shared/allocation.ts";
 import { parseShipment, logQueued, setShipmentStatus, parseSupplies, unlinkRemovedSupplies } from "./shippingInput.ts";
 import { autofillAgent, missingInputs, refreshSuggestedInputs, suggestValue } from "./inputs.ts";
 import { RESEARCH_MODEL, ResearchFailure, type ResearchRunner } from "./research.ts";
@@ -318,6 +319,15 @@ export function registerSetupRoutes(owner: Router, ctx: SetupContext): void {
         }
       }
       log(s, "Owner", "info", "Updated budget allocation settings.", now());
+    });
+    sendState(res);
+  });
+
+  owner.post("/allocation/reset", (_req, res) => {
+    store.mutate((s) => {
+      s.allocation.weights = {};
+      s.allocation.reserveBps = RECOMMENDED_RESERVE_BPS;
+      log(s, "Owner", "info", "Reset budget shares and the cash reserve to the recommended settings.", now());
     });
     sendState(res);
   });

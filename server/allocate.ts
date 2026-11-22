@@ -1,4 +1,4 @@
-import { planAllocation, planRebalance } from "../shared/allocation.ts";
+import { planAllocation, planRebalance, setupOf } from "../shared/allocation.ts";
 import { formatCents } from "../shared/money.ts";
 import type { DashboardState } from "../shared/types.ts";
 import { computeFinance } from "./finance.ts";
@@ -10,7 +10,7 @@ import { log } from "./store.ts";
  */
 export function autoAllocate(s: DashboardState, now: Date, trigger: "deposit" | "revenue" | "manual"): number {
   const f = computeFinance(s, now);
-  const plan = planAllocation({ agents: s.agents, settings: s.allocation, availableCents: f.unallocatedCents, cashBalanceCents: f.cashBalanceCents });
+  const plan = planAllocation({ agents: s.agents, settings: s.allocation, availableCents: f.unallocatedCents, cashBalanceCents: f.cashBalanceCents, setup: setupOf(s.business) });
   let total = 0;
   const parts: string[] = [];
   for (const line of plan.lines) {
@@ -31,7 +31,7 @@ export function autoAllocate(s: DashboardState, now: Date, trigger: "deposit" | 
 /** Applies a full rebalance of unspent money. Returns the number of budgets changed. */
 export function applyRebalance(s: DashboardState, now: Date): number {
   const f = computeFinance(s, now);
-  const plan = planRebalance({ agents: s.agents, settings: s.allocation, cashBalanceCents: f.cashBalanceCents, finance: f.agents });
+  const plan = planRebalance({ agents: s.agents, settings: s.allocation, cashBalanceCents: f.cashBalanceCents, finance: f.agents, setup: setupOf(s.business) });
   let changed = 0;
   const parts: string[] = [];
   for (const line of plan.lines) {
