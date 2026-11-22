@@ -110,6 +110,13 @@ export function AgentDetail(props: Props) {
             {agent.guardrails.dailySpendLimitCents === null ? "none" : formatCents(agent.guardrails.dailySpendLimitCents)}
           </div>
         </div>
+        <div className="stat">
+          <div className="stat-label">AI usage this month</div>
+          <div className="stat-value">
+            <Money cents={af?.aiThisMonthCents ?? 0} />
+          </div>
+          <div className="stat-hint">Estimated from what this agent reports</div>
+        </div>
       </div>
 
       <div className="tabs" role="tablist">
@@ -471,6 +478,13 @@ function ConnectTab({ agent, dash }: Props) {
           </li>
           <li>
             <strong>Log</strong> what it is doing and send a <strong>heartbeat</strong> so you can see it is alive.
+          </li>
+          <li>
+            <strong>Report AI usage</strong> after every model call (<code>POST /api/agent/v1/usage</code>) and stop when the reply says{" "}
+            <code>overLimit</code>.
+          </li>
+          <li>
+            For price changes and listings, include <code>priceCents</code>; prices below the floor are refused.
           </li>
         </ol>
         <pre>{`# 1. Get configuration

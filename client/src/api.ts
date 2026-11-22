@@ -2,7 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentTemplate } from "../../shared/templates.ts";
 import type { StateResponse } from "../../shared/types.ts";
 
-export class ApiError extends Error {}
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number = 0,
+    /** True when the dashboard has a password and this browser isn't signed in. */
+    public readonly loginRequired: boolean = false,
+  ) {
+    super(message);
+  }
+}
 
 export interface BackupInfo {
   name: string;
@@ -27,8 +36,8 @@ async function call<T>(method: string, url: string, body?: unknown): Promise<T> 
     data = null;
   }
   if (!res.ok) {
-    const message = (data as { error?: string } | null)?.error ?? `Request failed (${res.status}).`;
-    throw new ApiError(message);
+    const d = data as { error?: string; loginRequired?: boolean } | null;
+    throw new ApiError(d?.error ?? `Request failed (${res.status}).`, res.status, d?.loginRequired === true);
   }
   return data as T;
 }
@@ -72,6 +81,10 @@ export const api = {
   testDiscord: (target: string) => call<{ ok: boolean }>("POST", "/api/discord/test", { target }),
   discordSummary: () => call<{ ok: boolean }>("POST", "/api/discord/summary"),
   startResearch: (brief: Record<string, unknown>) => call<StateResponse>("POST", "/api/research", brief),
+  session: () => call<{ passwordSet: boolean; signedIn: boolean }>("GET", "/api/session"),
+  login: (password: string) => call<{ ok: boolean }>("POST", "/api/login", { password }),
+  logout: () => call<{ ok: boolean }>("POST", "/api/logout"),
+  setPassword: (currentPassword: string, newPassword: string) => call<StateResponse>("PUT", "/api/security/password", { currentPassword, newPassword }),
   chooseIdea: (jobId: string, index: number) => call<StateResponse>("POST", `/api/research/${jobId}/choose`, { index }),
   backups: () => call<{ backups: BackupInfo[] }>("GET", "/api/backups"),
   startOver: (keepCredentials: boolean) => call<StateResponse>("POST", "/api/reset", { confirm: "START OVER", keepCredentials }),
@@ -82,6 +95,9 @@ export const api = {
 export interface Dashboard {
   state: StateResponse | null;
   loadError: string | null;
+  /** The dashboard has a password and this browser must sign in. */
+  needsLogin: boolean;
+  refresh: () => Promise<void>;
   /** Runs a mutation, applies the returned state, and reports errors as toasts. Resolves true on success. */
   run: (fn: () => Promise<StateResponse | unknown>, success?: string) => Promise<boolean>;
   toasts: Toast[];
@@ -104,6 +120,7 @@ function isStateResponse(v: unknown): v is StateResponse {
 export function useDashboard(): Dashboard {
   const [state, setState] = useState<StateResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [needsLogin, setNeedsLogin] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextId = useRef(1);
   // Ignore poll results that started before a mutation finished, so a slow
@@ -124,10 +141,21 @@ export function useDashboard(): Dashboard {
       const s = await api.state();
       if (gen === generation.current) setState(s);
       setLoadError(null);
+      setNeedsLogin(false);
     } catch (e) {
+      if (e instanceof ApiError && e.loginRequired) {
+        setNeedsLogin(true);
+        setLoadError(null);
+        return;
+      }
       setLoadError(e instanceof Error ? e.message : String(e));
     }
   }, []);
+
+  const signedInRefresh = useCallback(async () => {
+    setNeedsLogin(false);
+    await refresh();
+  }, [refresh]);
 
   useEffect(() => {
     void refresh();
@@ -147,6 +175,7 @@ export function useDashboard(): Dashboard {
         if (success) notify("success", success);
         return true;
       } catch (e) {
+        if (e instanceof ApiError && e.loginRequired) setNeedsLogin(true);
         notify("error", e instanceof Error ? e.message : String(e));
         return false;
       }
@@ -154,5 +183,5 @@ export function useDashboard(): Dashboard {
     [notify, refresh],
   );
 
-  return { state, loadError, run, toasts, dismissToast, notify };
+  return { state, loadError, needsLogin, refresh: signedInRefresh, run, toasts, dismissToast, notify };
 }

@@ -6,10 +6,11 @@
  * the dashboard has not approved, and reports the real amount back afterwards.
  *
  * Run:
- *   ANTHROPIC_API_KEY=... AGENT_TOKEN=agt_... npm run agent:example -- "Find 3 suppliers and order samples"
+ *   AGENT_TOKEN=agt_... npm run agent:example -- "Find 3 suppliers and order samples"
  *
  * Env:
  *   AGENT_TOKEN     (required) the agent's token from the dashboard's Connect tab
+ *   ANTHROPIC_API_KEY  optional: by default the key saved on the dashboard's Credentials page is used
  *   DASHBOARD_URL   default http://127.0.0.1:4317
  *   DRY_RUN         default "true": approved actions are cancelled instead of performed,
  *                   so no spend is recorded. Set DRY_RUN=false once real integrations exist.
@@ -30,7 +31,6 @@ if (!TOKEN) {
 }
 
 const dashboard = new DashboardClient(DASHBOARD_URL, TOKEN);
-const client = new Anthropic();
 
 /**
  * Plug real integrations in here: one function per action key. Each receives
@@ -73,6 +73,8 @@ ${settings || "- (none)"}
 Actions you may request:
 ${actions || "- (none)"}
 
+${cfg.guardrails.priceFloorCents !== null ? `Prices: never set a price below ${dollars(cfg.guardrails.priceFloorCents)}. ` : ""}When you request a price change or publish a listing, include price_cents.
+
 Money: your remaining budget is ${dollars(cfg.budget?.remainingCents)}; per transaction ${dollars(cfg.guardrails.agent.perTransactionLimitCents)}; per day ${dollars(cfg.guardrails.agent.dailySpendLimitCents)}.
 
 How you work:
@@ -108,12 +110,13 @@ function makeTools(cfg: AgentConfig) {
         properties: {
           action: { type: "string", enum: allowed.length > 0 ? allowed : ["none"], description: "The action key." },
           amount_cents: { type: "integer", minimum: 0, description: "Cost in integer cents; 0 if it costs nothing." },
+          price_cents: { type: "integer", minimum: 0, description: "Only for price changes and listings: the selling price in cents." },
           description: { type: "string", description: "What exactly you will do and why. The owner reads this when approving." },
         },
         required: ["action", "amount_cents", "description"],
         additionalProperties: false,
       },
-      run: async ({ action, amount_cents, description }) => describe(await dashboard.requestAction(action, amount_cents, description)),
+      run: async ({ action, amount_cents, description, price_cents }) => describe(await dashboard.requestAction(action, amount_cents, description, price_cents)),
     }),
 
     betaTool({
@@ -215,11 +218,23 @@ async function main(): Promise<void> {
     console.log(`Agent is ${cfg.agent.status}. Activate it in the dashboard first.`);
     return;
   }
+  if (cfg.guardrails.ai.overLimit) {
+    console.log("This month's AI usage budget is used up. Raise it on the dashboard's Guardrails page to continue.");
+    return;
+  }
+
+  // Prefer the key saved on the dashboard (Credentials); fall back to ANTHROPIC_API_KEY.
+  const apiKey = (cfg.inputs.llm_api_key ?? "").trim() || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    console.log("No Anthropic API key: save one on the dashboard's Credentials page.");
+    return;
+  }
+  const client = new Anthropic({ apiKey });
 
   await dashboard.heartbeat(`Working on: ${task.slice(0, 200)}`);
   await dashboard.log(`Started task: ${task}`);
 
-  const final = await client.beta.messages.toolRunner({
+  const runner = client.beta.messages.toolRunner({
     model: MODEL,
     max_tokens: 16000,
     max_iterations: 30,
@@ -231,6 +246,27 @@ async function main(): Promise<void> {
     tools: makeTools(cfg),
     messages: [{ role: "user", content: task }],
   });
+
+  // Go message by message: report each call's AI usage, and stop at the monthly AI cap.
+  let final: Anthropic.Beta.BetaMessage | undefined;
+  for await (const message of runner) {
+    final = message;
+    const u = message.usage;
+    const r = await dashboard.reportUsage({
+      model: MODEL,
+      inputTokens: u.input_tokens ?? 0,
+      outputTokens: u.output_tokens ?? 0,
+      cacheReadTokens: u.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+      webSearches: u.server_tool_use?.web_search_requests ?? 0,
+    });
+    if (r.overLimit) {
+      await dashboard.log("Stopped: this month's AI usage budget is used up.", "warning");
+      console.log("Stopped: this month's AI usage budget is used up.");
+      return;
+    }
+  }
+  if (!final) throw new Error("The model returned no messages.");
 
   if (final.stop_reason === "refusal") {
     await dashboard.log("The model declined this task.", "warning");

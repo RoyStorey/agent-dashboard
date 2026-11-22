@@ -71,10 +71,10 @@ The full reference is in [docs/AGENT_API.md](docs/AGENT_API.md).
 [`examples/claude-agent.ts`](examples/claude-agent.ts) is a complete agent built on the Claude API (Anthropic TypeScript SDK, tool runner, `claude-opus-5-5`). The model can only *ask* for actions. The script's code refuses to perform anything the dashboard hasn't approved.
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-... AGENT_TOKEN=agt_... npm run agent:example -- "Find three UL-certified suppliers and order samples"
+AGENT_TOKEN=agt_... npm run agent:example -- "Find three UL-certified suppliers and order samples"
 ```
 
-`DRY_RUN` is on by default: approved actions are cancelled instead of performed, so no spend is recorded. To make an agent do real work, add a function for each action to the `integrations` map (e.g. call your supplier's or marketplace's API), then run with `DRY_RUN=false`. Schedule runs with cron or Task Scheduler.
+The agent uses the Anthropic key saved on Credentials (or `ANTHROPIC_API_KEY` if you set one), reports its AI usage after every call, and stops at the monthly AI cap. `DRY_RUN` is on by default: approved actions are cancelled instead of performed, so no spend is recorded. To make an agent do real work, add a function for each action to the `integrations` map (e.g. call your supplier's or marketplace's API), then run with `DRY_RUN=false`. Schedule runs with cron or Task Scheduler.
 
 ## How the guardrails decide
 
@@ -102,6 +102,9 @@ All money is stored as whole cents. Daily and monthly caps use calendar days and
 - Secrets (agent API keys) are stored in that file in plain text, so protect your computer the same way you protect saved passwords. The dashboard UI never displays a saved secret again. Only the agent that owns a secret receives it, via its config.
 - The server listens on `127.0.0.1` only. The owner API rejects requests addressed to other hostnames (DNS rebinding) and cross-site requests, and changes must be sent as JSON.
 - Agent tokens can be rotated at any time on the agent's **Connect** tab.
+- **Dashboard password** (Settings & start over): once set, every browser must sign in. Sessions last 12 hours and end when the dashboard restarts. Five wrong tries locks sign-in for 15 minutes. Changing the password signs out other browsers. Agents keep using their own tokens. Forgot it? Stop the dashboard and run `npm run reset-password` (your data is kept and backed up).
+- **Price floor:** price changes and new listings must state the price, and anything below the floor is denied. The floor is the agent's "Lowest allowed sale price", or else your plan's break-even price. New Storefront agents also need your approval for every price change.
+- **AI spending:** agents report each model call (`POST /api/agent/v1/usage`). Costs are estimated from a price list, shown on Financials and per agent, and stopped by an optional monthly AI cap on Guardrails. Also set a spending limit in your AI provider's own account, which the provider enforces even if an agent stops reporting.
 - Discord webhook URLs are treated as secrets: the dashboard never sends them back to the browser. Only approval requests can ping anyone, and only the mention you configured.
 
 ### Agents on another machine

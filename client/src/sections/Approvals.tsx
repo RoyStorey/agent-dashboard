@@ -40,6 +40,11 @@ function PendingCard({ r, state, dash }: { r: ActionRequest } & Pick<SectionProp
       actions={<span className="muted">{formatDateTime(r.createdAt)}</span>}
     >
       {r.description ? <p>{r.description}</p> : <p className="muted">No description given.</p>}
+      {r.priceCents !== undefined && r.priceCents !== null && (
+        <div>
+          <strong>New price:</strong> {formatCents(r.priceCents)}
+        </div>
+      )}
       <div className="help">Held because: {r.reasons.join(" ")}</div>
       {r.amountCents > 0 && (
         <div className="row">

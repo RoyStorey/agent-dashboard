@@ -34,6 +34,7 @@ Everything the agent needs to run. Call it at startup and before each run, becau
   "inputFields": [{ "key": "llm_api_key", "label": "AI model API key", "kind": "secret", "required": true }],
   "missingInputs": [],
   "reporting": { "discord": true },
+  "…": "guardrails also includes { ai: { monthlyLimitCents, monthCostCents, overLimit }, priceFloorCents }",
   "actions": [{ "key": "order_samples", "label": "Order samples", "spends": true, "allowed": true, "alwaysRequiresApproval": false }],
   "guardrails": {
     "killSwitch": false,
@@ -55,7 +56,7 @@ Ask permission before any real-world action.
 { "action": "order_samples", "amountCents": 4999, "description": "Samples from 3 suppliers" }
 ```
 
-`amountCents` defaults to `0`. Response (`201`):
+`amountCents` defaults to `0`. For price-setting actions (`update_price`, `publish_listing`) also send `"priceCents"`. A missing price, or one below the price floor (`guardrails.priceFloorCents` in `/config`), is denied. Requests are also denied once the month's AI usage budget is used up. Response (`201`):
 
 ```json
 { "request": { "id": "…", "action": "order_samples", "amountCents": 4999, "status": "approved", "reasons": ["Within all guardrails."], "…": "…" } }
@@ -102,6 +103,16 @@ Updates "last seen" and the status line shown on the dashboard. The response inc
 ```
 
 `level` is `info`, `warning`, `error` or `success`. The message appears in the dashboard's activity log.
+
+## `POST /usage`
+
+Report AI model usage after **each** model call, so the owner sees AI costs and the monthly AI cap can stop runaway loops.
+
+```json
+{ "model": "claude-opus-5-5", "inputTokens": 12000, "outputTokens": 1800, "cacheReadTokens": 0, "cacheWriteTokens": 0, "webSearches": 2 }
+```
+
+The cost is estimated from a built-in price list for current Claude models. For any other model, include `"costCents"` with the actual cost. The response is `{ "monthCostCents", "limitCents", "overLimit", "costCents" }`. **Stop working when `overLimit` is true.** This endpoint still works while the kill switch is on.
 
 ## `POST /report`
 

@@ -12,6 +12,7 @@ import { Guardrails } from "./sections/Guardrails.tsx";
 import { Credentials } from "./sections/Credentials.tsx";
 import { Financials } from "./sections/Financials.tsx";
 import { Integrations } from "./sections/Integrations.tsx";
+import { Login } from "./sections/Login.tsx";
 import { Money, realMoneyConnected } from "./sections/Money.tsx";
 import { Overview } from "./sections/Overview.tsx";
 import { Settings } from "./sections/Settings.tsx";
@@ -73,6 +74,8 @@ export function App() {
   };
 
   const { state } = dash;
+
+  if (dash.needsLogin) return <Login onSignedIn={dash.refresh} />;
 
   if (!state) {
     return (

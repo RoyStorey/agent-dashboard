@@ -14,6 +14,7 @@ export function Guardrails({ state, dash, go }: SectionProps) {
     dailySpendLimitCents: g.dailySpendLimitCents,
     monthlySpendLimitCents: g.monthlySpendLimitCents,
     approvalThresholdCents: g.approvalThresholdCents,
+    aiMonthlyLimitCents: g.aiMonthlyLimitCents,
   };
   const savedKey = JSON.stringify(saved);
   const [draft, setDraft] = useState<Limits>(saved);
@@ -61,7 +62,14 @@ export function Guardrails({ state, dash, go }: SectionProps) {
           <Field label="Ask me before any spend of at least" help="Empty = never ask by amount (agent thresholds still apply).">
             <MoneyInput nullable placeholder="Never" value={draft.approvalThresholdCents} onChange={(v) => setDraft({ ...draft, approvalThresholdCents: v })} ariaLabel="Global approval threshold" />
           </Field>
+          <Field label="AI usage cap per month" help="Estimated Claude/AI cost agents report. When reached, agent requests and AI research stop until next month.">
+            <MoneyInput nullable value={draft.aiMonthlyLimitCents} onChange={(v) => setDraft({ ...draft, aiMonthlyLimitCents: v })} ariaLabel="AI usage cap per month" />
+          </Field>
         </div>
+        <p className="help">
+          Also set a monthly spending limit in your AI provider's own account (e.g. Anthropic Console → Billing/Limits): that one is enforced by the provider
+          even if an agent stops reporting its usage.
+        </p>
         <div className="form-actions">
           <button
             className="btn"
@@ -94,6 +102,14 @@ export function Guardrails({ state, dash, go }: SectionProps) {
             <span className="muted">{g.monthlySpendLimitCents === null ? "no monthly cap" : `cap ${formatCents(g.monthlySpendLimitCents)}`}</span>
           </div>
           {g.monthlySpendLimitCents !== null && <ProgressBar value={f.spentThisMonthCents} max={g.monthlySpendLimitCents} label="Monthly cap used" />}
+        </Card>
+        <Card title="AI usage this month">
+          <div className="row between">
+            <span className="num">{formatCents(f.aiThisMonthCents)} estimated</span>
+            <span className="muted">{g.aiMonthlyLimitCents === null ? "no AI cap" : `cap ${formatCents(g.aiMonthlyLimitCents)}`}</span>
+          </div>
+          {g.aiMonthlyLimitCents !== null && <ProgressBar value={f.aiThisMonthCents} max={g.aiMonthlyLimitCents} label="AI cap used" />}
+          <p className="help">Counts only what agents and product research report. Your provider's bill is the final word.</p>
         </Card>
       </div>
 

@@ -5,6 +5,94 @@ import { Badge, Card, EmptyState, Field, PageHeader, formatDateTime } from "../c
 
 const CONFIRM = "START OVER";
 
+function PasswordCard({ state, dash }: Pick<SectionProps, "state" | "dash">) {
+  const set = state.security.passwordSet;
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const mismatch = next !== "" && confirm !== "" && next !== confirm;
+  const tooShort = next !== "" && next.length < 10;
+  const clear = () => {
+    setCurrent("");
+    setNext("");
+    setConfirm("");
+  };
+
+  return (
+    <Card title={<span className="row">Dashboard password {set ? <Badge tone="good">On</Badge> : <Badge tone="warn">Off</Badge>}</span>}>
+      <p className="muted">
+        {set
+          ? "Anyone opening the dashboard must sign in. Agents are unaffected; they use their own tokens. Sign-ins last 12 hours, and restarting the dashboard signs everyone out."
+          : "Right now anyone who can use this computer can open the dashboard and see or change everything. Set a password to require signing in. Agents are unaffected."}
+      </p>
+      <form
+        className="stack"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (tooShort || mismatch || !next) return;
+          if (await dash.run(() => api.setPassword(current, next), set ? "Password changed. Other browsers were signed out." : "Password set. The dashboard now requires signing in.")) clear();
+        }}
+      >
+        <div className="form-grid">
+          {set && (
+            <Field label="Current password" htmlFor="pw-current">
+              <input id="pw-current" type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+            </Field>
+          )}
+          <Field label={set ? "New password" : "Password"} htmlFor="pw-new" help="At least 10 characters. A short phrase is easiest to remember.">
+            <input id="pw-new" type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
+          </Field>
+          <Field label="Type it again" htmlFor="pw-confirm">
+            <input id="pw-confirm" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+          </Field>
+        </div>
+        {(tooShort || mismatch) && (
+          <div className="help" style={{ color: "var(--bad-strong)" }}>
+            {tooShort ? "Use at least 10 characters." : "The two passwords don't match."}
+          </div>
+        )}
+        <div className="form-actions">
+          {set && (
+            <>
+              <button
+                type="button"
+                className="btn"
+                onClick={async () => {
+                  try {
+                    await api.logout();
+                  } finally {
+                    window.location.reload();
+                  }
+                }}
+              >
+                Sign out
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={!current}
+                title={current ? "" : "Enter your current password first"}
+                onClick={async () => {
+                  if (!window.confirm("Remove the password? Anyone using this computer could open the dashboard.")) return;
+                  if (await dash.run(() => api.setPassword(current, ""), "Password removed.")) clear();
+                }}
+              >
+                Remove password
+              </button>
+            </>
+          )}
+          <button type="submit" className="btn btn-primary" disabled={!next || tooShort || mismatch || (set && !current)}>
+            {set ? "Change password" : "Set password"}
+          </button>
+        </div>
+        <p className="help">
+          Forgot it? Stop the dashboard and run <code>npm run reset-password</code>. Your data is kept.
+        </p>
+      </form>
+    </Card>
+  );
+}
+
 export function Settings({ state, dash, go }: SectionProps) {
   const [typed, setTyped] = useState("");
   const [keepCredentials, setKeepCredentials] = useState(false);
@@ -46,6 +134,8 @@ export function Settings({ state, dash, go }: SectionProps) {
   return (
     <>
       <PageHeader title="Settings & start over" subtitle="Clear out test data and begin again from a blank dashboard." />
+
+      <PasswordCard state={state} dash={dash} />
 
       <Card title="Start over">
         <p>This removes everything you've entered and returns the dashboard to how it looked on first launch:</p>

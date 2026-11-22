@@ -96,6 +96,10 @@ export function Financials({ state, dash }: SectionProps) {
                   <td className="right num">{neg(p.other)}</td>
                 </tr>
                 <tr>
+                  <td className="indent">AI usage (estimated, reported by agents)</td>
+                  <td className="right num">{neg(p.aiUsage)}</td>
+                </tr>
+                <tr>
                   <td className="indent">Fixed overhead ({p.days} days of {money(state.economics.fixedMonthlyCents)}/month)</td>
                   <td className="right num">{neg(p.fixedOverhead)}</td>
                 </tr>
@@ -114,7 +118,7 @@ export function Financials({ state, dash }: SectionProps) {
             {p.cogsMethod === "unit_cost"
               ? "COGS uses units sold × your planned landed cost, so inventory you bought but haven't sold yet isn't counted as an expense (it shows under cash flow)."
               : "No units sold reported yet (or no unit cost), so COGS is inventory purchased in the period."}{" "}
-            Agent API/model usage isn't tracked automatically; include it in fixed overhead.
+            AI usage counts what agents report; anything that doesn't report belongs in fixed overhead.
           </p>
         </Card>
 
@@ -263,7 +267,7 @@ function UnitPlan({ state, dash, actual }: Pick<SectionProps, "state" | "dash"> 
         <Field label="Return rate">
           <PercentInput value={e.returnRateBps} onChange={set("returnRateBps")} ariaLabel="Return rate percent" />
         </Field>
-        <Field label="Fixed costs / month" help="Seller plan, software, AI usage">
+        <Field label="Fixed costs / month" help="Seller plan, software. AI usage is tracked separately when agents report it.">
           <MoneyInput value={e.fixedMonthlyCents} onChange={set("fixedMonthlyCents")} ariaLabel="Fixed costs per month" />
         </Field>
         <Field label="Expected units / month" htmlFor="e-units">

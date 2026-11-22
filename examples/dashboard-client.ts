@@ -10,6 +10,7 @@ export interface ActionRequest {
   action: string;
   description: string;
   amountCents: number;
+  priceCents?: number | null;
   actualAmountCents: number | null;
   status: RequestStatus;
   reasons: string[];
@@ -25,6 +26,8 @@ export interface AgentConfig {
   actions: Array<{ key: string; label: string; spends: boolean; allowed: boolean; alwaysRequiresApproval: boolean }>;
   guardrails: {
     killSwitch: boolean;
+    ai: { monthlyLimitCents: number | null; monthCostCents: number; overLimit: boolean };
+    priceFloorCents: number | null;
     agent: { perTransactionLimitCents: number | null; dailySpendLimitCents: number | null; approvalThresholdCents: number | null };
     global: {
       perTransactionLimitCents: number | null;
@@ -75,8 +78,22 @@ export class DashboardClient {
     return this.call("POST", "/log", { message: message.slice(0, 2000), level });
   }
 
-  async requestAction(action: string, amountCents: number, description: string): Promise<ActionRequest> {
-    return (await this.call<{ request: ActionRequest }>("POST", "/actions", { action, amountCents, description })).request;
+  /** priceCents is required for price-setting actions (price changes, listings) and checked against the price floor. */
+  async requestAction(action: string, amountCents: number, description: string, priceCents?: number): Promise<ActionRequest> {
+    return (await this.call<{ request: ActionRequest }>("POST", "/actions", { action, amountCents, description, priceCents })).request;
+  }
+
+  /** Report AI usage after each model call. Stop when overLimit is true. */
+  reportUsage(u: {
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    webSearches?: number;
+    costCents?: number;
+  }): Promise<{ monthCostCents: number; limitCents: number | null; overLimit: boolean; costCents: number }> {
+    return this.call("POST", "/usage", u);
   }
 
   async getRequest(id: string): Promise<ActionRequest> {
