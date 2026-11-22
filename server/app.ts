@@ -520,6 +520,8 @@ export function createApp(opts: AppOptions): express.Express {
         links: [],
         time: "",
         templateKey: null,
+        money: null,
+        waitsFor: null,
       });
       log(s, "Owner", "info", `Added task "${title.trim()}".`, now());
     });

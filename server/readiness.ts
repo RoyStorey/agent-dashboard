@@ -197,13 +197,14 @@ export function computeOwnerActions(state: DashboardState, finance: FinanceSumma
     });
   }
 
-  const openTasks = state.tasks.filter((t) => t.status === "todo").length;
+  // Steps waiting on an unbuilt dashboard feature can't be done yet, so they don't count.
+  const openTasks = state.tasks.filter((t) => t.status === "todo" && !t.waitsFor).length;
   if (openTasks > 0) {
     out.push({
       id: "open-tasks",
       severity: "info",
-      title: `${openTasks} legal & account step${openTasks === 1 ? "" : "s"} only you can do`,
-      detail: "Each has exact steps and direct links.",
+      title: `${openTasks} step${openTasks === 1 ? "" : "s"} only you can do (legal, accounts, real money)`,
+      detail: "Each has exact steps, direct links, and a tag showing whether it moves real money or is accounting only.",
       section: "todo",
     });
   }

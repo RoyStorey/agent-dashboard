@@ -9,6 +9,8 @@ export type ServiceCategory = "ai" | "sales" | "ads" | "operations" | "finance" 
 
 export interface ServiceDef {
   key: string;
+  /** What this credential can do with real money: spend/refund it, only see it, or neither. */
+  money: "spends" | "reads" | "none";
   label: string;
   provider: string;
   category: ServiceCategory;
@@ -30,6 +32,7 @@ export interface ServiceDef {
 export const SERVICES: ServiceDef[] = [
   {
     key: "anthropic",
+    money: "none",
     label: "Anthropic (Claude) API key",
     provider: "Anthropic",
     category: "ai",
@@ -49,6 +52,7 @@ export const SERVICES: ServiceDef[] = [
   },
   {
     key: "openai",
+    money: "none",
     label: "OpenAI API key",
     provider: "OpenAI",
     category: "ai",
@@ -67,6 +71,7 @@ export const SERVICES: ServiceDef[] = [
   },
   {
     key: "google_gemini",
+    money: "none",
     label: "Google Gemini API key",
     provider: "Google",
     category: "ai",
@@ -81,6 +86,7 @@ export const SERVICES: ServiceDef[] = [
   },
   {
     key: "amazon_sp_api",
+    money: "reads",
     label: "Amazon Selling Partner API (Seller Central)",
     provider: "Amazon",
     category: "sales",
@@ -99,6 +105,7 @@ export const SERVICES: ServiceDef[] = [
   },
   {
     key: "shopify_admin",
+    money: "spends",
     label: "Shopify Admin API access",
     provider: "Shopify",
     category: "sales",
@@ -116,6 +123,7 @@ export const SERVICES: ServiceDef[] = [
   },
   {
     key: "amazon_ads_api",
+    money: "spends",
     label: "Amazon Ads API",
     provider: "Amazon",
     category: "ads",
@@ -133,6 +141,7 @@ export const SERVICES: ServiceDef[] = [
   },
   {
     key: "keepa",
+    money: "none",
     label: "Keepa API key (Amazon price & sales history)",
     provider: "Keepa",
     category: "research",
@@ -146,6 +155,7 @@ export const SERVICES: ServiceDef[] = [
   },
   {
     key: "alibaba_account",
+    money: "none",
     label: "Alibaba.com buyer account",
     provider: "Alibaba",
     category: "operations",
@@ -159,6 +169,7 @@ export const SERVICES: ServiceDef[] = [
   },
   {
     key: "shipbob",
+    money: "none",
     label: "ShipBob API token (3PL fulfillment)",
     provider: "ShipBob",
     category: "operations",
@@ -172,6 +183,7 @@ export const SERVICES: ServiceDef[] = [
   },
   {
     key: "quickbooks",
+    money: "reads",
     label: "QuickBooks Online API",
     provider: "Intuit",
     category: "finance",
@@ -185,6 +197,40 @@ export const SERVICES: ServiceDef[] = [
     paste: "Four lines: client ID, client secret, refresh token, realm ID",
     placeholder: "AB…\n…\nAB11…\n9130…",
     time: "15 min",
+  },
+  {
+    key: "stripe",
+    money: "spends",
+    label: "Stripe restricted key (agent cards)",
+    provider: "Stripe",
+    category: "finance",
+    secret: true,
+    multiline: false,
+    url: "https://dashboard.stripe.com/apikeys",
+    steps: [
+      "Stripe Issuing must be approved first (see Money setup).",
+      "Developers → API keys → Create restricted key, named “agent-dashboard”.",
+      "Set Issuing (cards, cardholders, authorizations) to Write and Balance to Read; leave the rest at None.",
+      "Create it and copy the key.",
+    ],
+    paste: "The restricted key. It starts with rk_live_ (or rk_test_ for test mode)",
+    placeholder: "rk_live_…",
+    expectPrefix: "rk_",
+    time: "5 min",
+  },
+  {
+    key: "plaid",
+    money: "reads",
+    label: "Plaid keys (read-only bank connection)",
+    provider: "Plaid",
+    category: "finance",
+    secret: true,
+    multiline: true,
+    url: "https://dashboard.plaid.com/developers/keys",
+    steps: ["Sign up at Plaid and request Production access.", "Open Developers → Keys.", "Copy the client_id and the Production secret."],
+    paste: "Two lines: client_id, then the Production secret",
+    placeholder: "5f1a…\n9c3e…",
+    time: "15 min + Plaid review",
   },
 ];
 

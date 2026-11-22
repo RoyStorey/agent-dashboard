@@ -1,4 +1,4 @@
-import type { ActionDef, InputField, OwnerTask, TaskCategory, TaskLink } from "./types.ts";
+import type { ActionDef, DashboardState, InputField, MoneyKind, OwnerTask, TaskCategory, TaskLink } from "./types.ts";
 
 export interface AgentTemplate {
   role: string;
@@ -241,7 +241,45 @@ export interface TaskTemplate {
   steps: string[];
   links: TaskLink[];
   time: string;
+  money?: MoneyKind;
+  waitsFor?: string;
 }
+
+/** Dashboard features that real-money steps depend on, and whether they exist yet. */
+export interface MoneyIntegration {
+  key: string;
+  name: string;
+  money: MoneyKind;
+  built: boolean;
+  what: string;
+}
+
+export const MONEY_INTEGRATIONS: MoneyIntegration[] = [
+  {
+    key: "sales_reporting",
+    name: "Sales & payout reporting",
+    money: "reads",
+    built: true,
+    what: "The Finance agent sends real marketplace payouts (gross, refunds, fees, units) to the dashboard, which fills in Financials.",
+  },
+  {
+    key: "stripe_cards",
+    name: "Stripe virtual cards for agents",
+    money: "moves",
+    built: false,
+    what: "The dashboard creates a card per agent (or per approved purchase) with a hard limit, and approves or declines each charge in real time against budgets, caps and the kill switch.",
+  },
+  {
+    key: "plaid_sync",
+    name: "Bank balance sync (Plaid)",
+    money: "reads",
+    built: false,
+    what: "Reads your business bank balance and transactions read-only, so deposits appear automatically and Cash matches the bank.",
+  },
+];
+
+const WAITS_STRIPE = "Stripe virtual cards in the dashboard (not built yet)";
+const WAITS_PLAID = "Bank balance sync (Plaid) in the dashboard (not built yet)";
 
 export const DEFAULT_TASKS: TaskTemplate[] = [
   {
@@ -269,6 +307,7 @@ export const DEFAULT_TASKS: TaskTemplate[] = [
   {
     key: "bank",
     category: "finance",
+    money: "moves",
     title: "Open a business bank account",
     description: "Keeps business money separate. Funding goes in here and marketplace payouts land here.",
     steps: ["Bring your LLC approval and EIN letter.", "Open a business checking account at any bank or online business bank.", "Order a debit card with a spending limit for agent purchases."],
@@ -323,11 +362,121 @@ export const DEFAULT_TASKS: TaskTemplate[] = [
     time: "45 min + verification",
   },
   {
-    key: "spend_card",
-    category: "finance",
-    title: "Set up a capped card for agent spending",
-    description: "Agents' tools charge a card. Use one with a hard monthly limit, never your main card.",
-    steps: ["Create a virtual or physical card on the business account.", "Set its monthly limit equal to your Guardrails monthly cap."],
+    key: "money_transfer",
+    category: "money",
+    money: "moves",
+    title: "Move your starting budget into the business bank account",
+    description: "Real money: this is the cash your agents will actually spend. Only move what you can afford to lose while testing.",
+    steps: ["Decide the starting amount (the AI research shows a startup cost for each idea).", "Transfer it from your personal account to the business checking account.", "Keep the confirmation; your accountant will want it as owner's capital."],
+    links: [],
+    time: "5 min",
+  },
+  {
+    key: "money_record",
+    category: "money",
+    money: "records",
+    title: "Record that deposit in the dashboard",
+    description: "Accounting only: tells the dashboard how much is available so it can split budgets and enforce caps. It ticks itself when you record a deposit.",
+    steps: ["Open Funding → Deposit and enter the same amount you transferred.", "It is split across agents automatically."],
+    links: [],
+    time: "1 min",
+  },
+  {
+    key: "stripe_apply",
+    category: "money",
+    money: "moves",
+    title: "Apply for Stripe Issuing (cards for agents)",
+    description:
+      "Lets the dashboard create virtual cards with hard limits, so an agent physically cannot spend more than you allowed. Needs a registered US business; Stripe reviews each application and may decline.",
+    steps: [
+      "Create a Stripe account with your LLC, EIN and business bank account.",
+      "Open the Issuing page in the Stripe dashboard and request access (or contact Stripe sales from the Issuing page).",
+      "Wait for approval. You can continue with the other steps meanwhile.",
+    ],
+    links: [
+      { label: "Stripe Issuing", url: "https://stripe.com/issuing" },
+      { label: "Create a Stripe account", url: "https://dashboard.stripe.com/register" },
+    ],
+    time: "20 min + Stripe review",
+  },
+  {
+    key: "stripe_key",
+    category: "money",
+    money: "moves",
+    title: "Paste a Stripe restricted key on Credentials",
+    description: "Gives the dashboard permission to create and control agent cards. A restricted key can only do what you allow. It ticks itself when you save it.",
+    steps: [
+      "In Stripe: Developers → API keys → Create restricted key, named “agent-dashboard”.",
+      "Give it Write access to Issuing (cards, cardholders, authorizations) and Read access to Balance. Leave everything else at None.",
+      "Copy the key (starts with rk_live_) and paste it under Credentials → Stripe.",
+    ],
+    links: [{ label: "Stripe API keys", url: "https://dashboard.stripe.com/apikeys" }],
+    time: "5 min",
+  },
+  {
+    key: "stripe_fund",
+    category: "money",
+    money: "moves",
+    title: "Add money to your Stripe Issuing balance",
+    description: "Agent cards spend from this balance, not from your bank account. Keep it at or below the total of your agents' budgets.",
+    steps: ["After approval, open Issuing → Balance in Stripe and add funds from your business bank account.", "Add about the total of your agents' budgets (see Funding)."],
+    links: [{ label: "Stripe Issuing docs", url: "https://docs.stripe.com/issuing" }],
+    time: "5 min + bank transfer time",
+  },
+  {
+    key: "ads_card",
+    category: "money",
+    money: "moves",
+    title: "Put the Marketing agent's card on your ad account",
+    description: "Ad platforms charge the card on file. Using the agent's limited card means ad spend can never exceed its budget.",
+    steps: [
+      "Open the Marketing agent → Connect and copy its card details.",
+      "In Amazon Ads (or your ad platform) → Billing, replace the payment method with that card.",
+      "Also set a monthly budget cap inside the ad platform equal to the Marketing budget.",
+    ],
+    links: [],
+    time: "10 min",
+    waitsFor: WAITS_STRIPE,
+  },
+  {
+    key: "plaid_keys",
+    category: "money",
+    money: "reads",
+    title: "Get Plaid keys for a read-only bank connection",
+    description: "Read-only: Plaid lets the dashboard see your business bank balance and transactions. It cannot move money. It ticks itself when you save the keys.",
+    steps: [
+      "Sign up for a Plaid account and request Production access (Plaid reviews it).",
+      "Open Developers → Keys and copy your client_id and Production secret.",
+      "Paste both under Credentials → Plaid.",
+    ],
+    links: [
+      { label: "Plaid sign-up", url: "https://dashboard.plaid.com/signup" },
+      { label: "Plaid keys", url: "https://dashboard.plaid.com/developers/keys" },
+    ],
+    time: "15 min + Plaid review",
+  },
+  {
+    key: "plaid_link",
+    category: "money",
+    money: "reads",
+    title: "Link your business bank account (read-only)",
+    description: "You log in to your bank through Plaid's secure window; the dashboard never sees your bank password.",
+    steps: ["Open Money setup and click “Link bank account”.", "Choose your bank, log in, and select the business checking account."],
+    links: [],
+    time: "3 min",
+    waitsFor: WAITS_PLAID,
+  },
+  {
+    key: "sales_sync",
+    category: "money",
+    money: "reads",
+    title: "Let the Finance agent report real sales",
+    description: "Read-only: the Finance agent reads your marketplace payouts and reports gross sales, refunds, fees and units, which fill in Financials.",
+    steps: [
+      "Save your Amazon Selling Partner API or Shopify credentials under Credentials.",
+      "Activate the Finance agent and run its program at least daily (see Agent team → Finance → Connect).",
+      "Check Financials after the first payout appears.",
+    ],
     links: [],
     time: "10 min",
   },
@@ -356,5 +505,14 @@ export function makeDefaultTasks(newId: () => string): OwnerTask[] {
     links: t.links.map((l) => ({ ...l })),
     time: t.time,
     templateKey: t.key,
+    money: t.money ?? null,
+    waitsFor: t.waitsFor ?? null,
   }));
 }
+
+/** Tasks the dashboard can tick by itself, and the condition that marks them done. */
+export const AUTO_DONE: Record<string, (s: DashboardState) => boolean> = {
+  money_record: (s) => s.funding.some((f) => f.type === "deposit"),
+  stripe_key: (s) => (s.vault.stripe?.value ?? "").trim() !== "",
+  plaid_keys: (s) => (s.vault.plaid?.value ?? "").trim() !== "",
+};

@@ -2,11 +2,12 @@ import { useState } from "react";
 import type { OwnerAction, OwnerTask, SectionKey, TaskCategory } from "../../../shared/types.ts";
 import type { SectionProps } from "../App.tsx";
 import { api } from "../api.ts";
-import { Badge, Card, EmptyState, ExtLink, Field, PageHeader, ProgressBar } from "../components/ui.tsx";
+import { Badge, Card, EmptyState, ExtLink, Field, MoneyBadge, MoneyLegend, PageHeader, ProgressBar } from "../components/ui.tsx";
 
 const CATEGORY_LABEL: Record<TaskCategory, string> = {
   legal: "Legal & admin",
-  finance: "Money & banking",
+  finance: "Banking",
+  money: "Connect real money",
   sales: "Sales channels",
   product: "Product",
   operations: "Operations",
@@ -38,7 +39,7 @@ export function ActionList(props: { actions: OwnerAction[]; go: (s: SectionKey, 
   );
 }
 
-function TaskRow({ task, dash }: { task: OwnerTask; dash: SectionProps["dash"] }) {
+export function TaskRow({ task, dash }: { task: OwnerTask; dash: SectionProps["dash"] }) {
   const [open, setOpen] = useState(false);
   const [notes, setNotes] = useState(task.notes);
   const done = task.status === "done";
@@ -57,9 +58,15 @@ function TaskRow({ task, dash }: { task: OwnerTask; dash: SectionProps["dash"] }
         <div>
           <div className="row">
             <span className="title">{task.title}</span>
+            {task.money && <MoneyBadge kind={task.money} />}
             {task.time && !done && <Badge>{task.time}</Badge>}
           </div>
           {task.description && !done && <div className="muted">{task.description}</div>}
+          {task.waitsFor && !done && (
+            <div className="help" style={{ color: "var(--warn)" }}>
+              ⏳ Waiting on: {task.waitsFor}. You can't do this step yet.
+            </div>
+          )}
           {task.notes && !open && <div className="help">Notes: {task.notes}</div>}
         </div>
         {!done && task.steps.length > 0 && (
@@ -138,6 +145,15 @@ export function Todo({ state, dash, go }: SectionProps) {
         actions={<span className="muted">{state.tasks.length ? Math.round((done / state.tasks.length) * 100) : 0}% complete</span>}
       >
         <ProgressBar value={done} max={state.tasks.length} label="Checklist progress" kind="progress" />
+        <details>
+          <summary className="muted" style={{ cursor: "pointer" }}>
+            What the money tags mean
+          </summary>
+          <div style={{ marginTop: 8 }}>
+            <MoneyLegend />
+            <p className="help" style={{ marginTop: 6 }}>Steps with no tag are paperwork.</p>
+          </div>
+        </details>
         {categories.map((c) => (
           <div key={c} className="stack" style={{ gap: 0 }}>
             <h4 className="nav-group" style={{ margin: "8px 0 0" }}>

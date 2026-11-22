@@ -29,6 +29,16 @@ export function VaultItem(props: { svc: ServiceDef; state: StateResponse; dash: 
           <div className="row">
             <span className="title">{svc.label}</span>
             {isSet ? <Badge tone="good">Saved {saved?.preview}</Badge> : <Badge tone={users.length > 0 ? "bad" : "neutral"}>{users.length > 0 ? "Needed" : "Optional"}</Badge>}
+            {svc.money === "spends" && (
+              <span title="Whoever holds this can spend or refund real money.">
+                <Badge tone="bad">$ Can spend real money</Badge>
+              </span>
+            )}
+            {svc.money === "reads" && (
+              <span title="Sees real money data but cannot move money.">
+                <Badge tone="info">👁 Read-only money data</Badge>
+              </span>
+            )}
           </div>
           <div className="muted" style={{ fontSize: 13 }}>
             {users.length > 0 ? `Used by ${users.map((u) => u.name).join(", ")}` : "Not used by any agent yet"} · about {svc.time}

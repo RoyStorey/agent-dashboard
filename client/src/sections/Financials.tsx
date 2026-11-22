@@ -5,7 +5,7 @@ import { PERIOD_LABEL, SPEND_LABEL, computePnL, type Period } from "../../../sha
 import type { SpendCategory, UnitEconomics } from "../../../shared/types.ts";
 import type { SectionProps } from "../App.tsx";
 import { api } from "../api.ts";
-import { Card, Field, MoneyInput, PageHeader, PercentInput, Stat } from "../components/ui.tsx";
+import { Card, Field, MoneyBadge, MoneyInput, PageHeader, PercentInput, Stat } from "../components/ui.tsx";
 
 const PERIODS: Period[] = ["this_month", "last_month", "last_30", "all"];
 
@@ -168,7 +168,7 @@ function RecordSales({ dash }: Pick<SectionProps, "dash">) {
   const [note, setNote] = useState("");
   const net = (gross ?? 0) - (refunds ?? 0) - (fees ?? 0);
   return (
-    <Card title="Record sales yourself">
+    <Card title={<span className="row">Record sales yourself <MoneyBadge kind="records" /></span>}>
       <p className="muted">The Finance agent reports these automatically. Use this for a payout you entered by hand.</p>
       <form
         className="stack"

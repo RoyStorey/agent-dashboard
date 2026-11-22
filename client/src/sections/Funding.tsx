@@ -5,7 +5,7 @@ import { formatCents } from "../../../shared/money.ts";
 import type { AgentView, FundingType } from "../../../shared/types.ts";
 import type { SectionProps } from "../App.tsx";
 import { api } from "../api.ts";
-import { Badge, Card, EmptyState, Field, Money, MoneyInput, PageHeader, PercentInput, ProgressBar, Stat, formatDateTime } from "../components/ui.tsx";
+import { Badge, Card, EmptyState, Field, Money, MoneyBadge, MoneyInput, PageHeader, PercentInput, ProgressBar, Stat, formatDateTime } from "../components/ui.tsx";
 
 function BudgetCell({ agent, dash }: { agent: AgentView; dash: SectionProps["dash"] }) {
   const [value, setValue] = useState<number | null>(agent.budgetCents);
@@ -184,7 +184,7 @@ function Allocation({ state, dash }: Pick<SectionProps, "state" | "dash">) {
 
 const TYPE_LABEL: Record<FundingType, string> = { deposit: "Deposit", withdrawal: "Withdrawal", revenue: "Sales payout" };
 
-export function Funding({ state, dash }: SectionProps) {
+export function Funding({ state, dash, go }: SectionProps) {
   const f = state.finance;
   const [type, setType] = useState<"deposit" | "withdrawal">("deposit");
   const [amount, setAmount] = useState<number | null>(null);
@@ -236,6 +236,16 @@ export function Funding({ state, dash }: SectionProps) {
   return (
     <>
       <PageHeader title="Funding" subtitle="Put money in once; it is split across agents automatically. Agents can never spend more than their budget or the cash on hand." />
+
+      <div className="banner banner-info">
+        <span>
+          <MoneyBadge kind="records" /> Everything on this page is a record. Deposits, withdrawals and budgets don't move real money; move the money in your
+          bank yourself, then record it here.
+        </span>
+        <button className="btn btn-sm" onClick={() => go("money")}>
+          How real money connects
+        </button>
+      </div>
 
       <div className="stats">
         <Stat label="Cash balance" value={<Money cents={f.cashBalanceCents} />} hint="Deposits + payouts − withdrawals − spend" />

@@ -121,7 +121,15 @@ export interface GlobalGuardrails {
 }
 
 export type TaskStatus = "todo" | "done";
-export type TaskCategory = "legal" | "finance" | "sales" | "product" | "operations" | "custom";
+export type TaskCategory = "legal" | "finance" | "money" | "sales" | "product" | "operations" | "custom";
+
+/**
+ * How a step relates to real money:
+ * - "moves": real money changes hands (bank transfers, cards, billing).
+ * - "reads": connects to a real account read-only; it can see money but cannot move it.
+ * - "records": accounting only; numbers are written down in the dashboard, nothing moves.
+ */
+export type MoneyKind = "moves" | "reads" | "records";
 
 export interface TaskLink {
   label: string;
@@ -145,6 +153,10 @@ export interface OwnerTask {
   time: string;
   /** Matches the built-in task definition, so text can be refreshed on upgrade. */
   templateKey: string | null;
+  /** How this step relates to real money (null = paperwork, no money involved). */
+  money: MoneyKind | null;
+  /** Set when the step can't be done until a dashboard feature exists. */
+  waitsFor: string | null;
 }
 
 export type FundingType = "deposit" | "withdrawal" | "revenue";
@@ -370,7 +382,8 @@ export type SectionKey =
   | "financials"
   | "credentials"
   | "integrations"
-  | "settings";
+  | "settings"
+  | "money";
 
 export interface AgentReadiness {
   agentId: string;

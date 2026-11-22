@@ -207,3 +207,33 @@ export function ExtLink(props: { href: string; children: ReactNode; className?: 
 export function StepState({ done }: { done: boolean }) {
   return <span className={`step-dot ${done ? "done" : ""}`} aria-label={done ? "Done" : "To do"}>{done ? "✓" : ""}</span>;
 }
+
+export const MONEY_META = {
+  moves: { label: "Moves real money", tone: "bad", icon: "$", explain: "Real money changes hands: bank transfers, card charges, billing." },
+  reads: { label: "Reads real accounts", tone: "info", icon: "👁", explain: "Connects to a real account read-only. It can see money but can't move it." },
+  records: { label: "Accounting only", tone: "good", icon: "✎", explain: "Numbers written down in this dashboard. No real money moves." },
+} as const;
+
+export function MoneyBadge({ kind }: { kind: keyof typeof MONEY_META }) {
+  const m = MONEY_META[kind];
+  return (
+    <span title={m.explain}>
+      <Badge tone={m.tone}>
+        <span aria-hidden>{m.icon}</span> {m.label}
+      </Badge>
+    </span>
+  );
+}
+
+export function MoneyLegend() {
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      {(Object.keys(MONEY_META) as Array<keyof typeof MONEY_META>).map((k) => (
+        <div key={k} className="row" style={{ flexWrap: "nowrap", alignItems: "flex-start" }}>
+          <MoneyBadge kind={k} />
+          <span className="muted">{MONEY_META[k].explain}</span>
+        </div>
+      ))}
+    </div>
+  );
+}

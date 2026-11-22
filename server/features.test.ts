@@ -558,3 +558,46 @@ describe("start over and backups", () => {
     assert.equal(sent.length, before);
   });
 });
+
+describe("money setup checklist", () => {
+  it("tags every money step and ticks the ones the dashboard can verify", async () => {
+    const store = new Store(null);
+    const app = createApp({ store });
+    const money = store.get().tasks.filter((t) => t.category === "money");
+    assert.ok(money.length >= 8);
+    assert.ok(money.every((t) => t.money !== null), "every money step says what it touches");
+    assert.equal(money.find((t) => t.templateKey === "money_record")?.money, "records");
+    assert.equal(money.find((t) => t.templateKey === "plaid_keys")?.money, "reads");
+    assert.equal(money.find((t) => t.templateKey === "stripe_apply")?.money, "moves");
+    assert.ok(money.find((t) => t.templateKey === "ads_card")?.waitsFor, "steps blocked on unbuilt features say so");
+
+    const status = (k: string) => store.get().tasks.find((t) => t.templateKey === k)?.status;
+    assert.equal(status("money_record"), "todo");
+    await request(app).post("/api/funding").set(json).send({ type: "deposit", amountCents: 1000 }).expect(200);
+    assert.equal(status("money_record"), "done");
+    await request(app).put("/api/vault/stripe").set(json).send({ value: "rk_test_abc123456789" }).expect(200);
+    assert.equal(status("stripe_key"), "done");
+    await request(app).put("/api/vault/plaid").set(json).send({ value: "client\nsecret" }).expect(200);
+    assert.equal(status("plaid_keys"), "done");
+    assert.equal(status("stripe_apply"), "todo", "steps the dashboard can't verify stay manual");
+  });
+
+  it("upgrades an older checklist: drops the old card task, adds money steps", () => {
+    const s = migrate({
+      tasks: [
+        { id: "x", title: "Set up a capped card for agent spending", description: "", category: "finance", status: "todo", notes: "", custom: false, completedAt: null, steps: [], links: [], time: "", templateKey: "spend_card" },
+        { id: "b", title: "Open a business bank account", description: "", category: "finance", status: "done", notes: "", custom: false, completedAt: "x", steps: [], links: [], time: "", templateKey: "bank" },
+      ],
+    } as unknown as Partial<DashboardState> & Record<string, unknown>);
+    assert.ok(!s.tasks.some((t) => t.id === "x"));
+    const bank = s.tasks.find((t) => t.id === "b")!;
+    assert.equal(bank.status, "done");
+    assert.equal(bank.money, "moves");
+    assert.ok(s.tasks.some((t) => t.templateKey === "stripe_apply"));
+    const withDeposit = migrate({
+      funding: [{ id: "f", type: "deposit", amountCents: 100, note: "", agentId: null, createdAt: "2026-11-01T00:00:00.000Z" }],
+      tasks: [],
+    } as unknown as Partial<DashboardState> & Record<string, unknown>);
+    assert.equal(withDeposit.tasks.find((t) => t.templateKey === "money_record")?.status, "done", "already-satisfied steps tick on upgrade");
+  });
+});

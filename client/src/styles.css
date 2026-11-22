@@ -1085,3 +1085,9 @@ ol.steps {
 .theme-toggle {
   font-size: 13px;
 }
+
+@media (max-width: 860px) {
+  .optional-chip {
+    display: none;
+  }
+}

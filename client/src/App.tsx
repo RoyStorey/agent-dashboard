@@ -12,6 +12,7 @@ import { Guardrails } from "./sections/Guardrails.tsx";
 import { Credentials } from "./sections/Credentials.tsx";
 import { Financials } from "./sections/Financials.tsx";
 import { Integrations } from "./sections/Integrations.tsx";
+import { Money, realMoneyConnected } from "./sections/Money.tsx";
 import { Overview } from "./sections/Overview.tsx";
 import { Settings } from "./sections/Settings.tsx";
 import { Setup, setupSteps } from "./sections/Setup.tsx";
@@ -39,6 +40,7 @@ const NAV: NavItem[] = [
   { key: "agents", label: "Agent team", group: "Agents" },
   { key: "approvals", label: "Approvals", group: "Agents" },
   { key: "activity", label: "Activity", group: "Agents" },
+  { key: "money", label: "Money setup", group: "Control" },
   { key: "credentials", label: "Credentials", group: "Control" },
   { key: "integrations", label: "Discord", group: "Control" },
   { key: "guardrails", label: "Guardrails", group: "Control" },
@@ -100,6 +102,7 @@ export function App() {
     },
     agents: { n: state.agents.length, alert: false },
     setup: { n: setupLeft, alert: false },
+    money: { n: state.tasks.filter((t) => t.category === "money" && t.status === "todo" && !t.waitsFor).length, alert: false },
     credentials: { n: new Set(state.readiness.flatMap((r) => r.missingVaultKeys)).size, alert: false },
     approvals: {
       n: state.requests.filter((r) => r.status === "pending_approval").length,
@@ -159,8 +162,13 @@ export function App() {
             ☰
           </button>
           <div className="spacer" />
+          {!realMoneyConnected() && (
+            <button className="btn btn-sm optional-chip" onClick={() => go("money")} title="Amounts here are records; no real money is connected. Click for details.">
+              ✎ Accounting only
+            </button>
+          )}
           <div className="topbar-stat">
-            <span>Cash</span>
+            <span>Cash (recorded)</span>
             <strong className="num">{formatCents(state.finance.cashBalanceCents)}</strong>
           </div>
           <div className="topbar-stat optional">
@@ -212,6 +220,7 @@ export function App() {
           {section === "guardrails" && <Guardrails {...props} />}
           {section === "funding" && <Funding {...props} />}
           {section === "settings" && <Settings {...props} />}
+          {section === "money" && <Money {...props} />}
         </main>
       </div>
       <Toasts toasts={dash.toasts} onDismiss={dash.dismissToast} />

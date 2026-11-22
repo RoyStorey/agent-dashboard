@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { EMPTY_ECONOMICS } from "../shared/economics.ts";
-import { DEFAULT_TASKS, findTemplate, makeDefaultTasks } from "../shared/templates.ts";
+import { AUTO_DONE, DEFAULT_TASKS, findTemplate, makeDefaultTasks } from "../shared/templates.ts";
 import type { ActivityEntry, ActivityLevel, DashboardState, DiscordSettings } from "../shared/types.ts";
 
 export const MAX_ACTIVITY = 2000;
@@ -56,6 +56,17 @@ export function defaultState(): DashboardState {
   };
 }
 
+/** Ticks checklist steps the dashboard can verify itself (e.g. a deposit was recorded). Never un-ticks. */
+export function autoCompleteTasks(s: DashboardState, now: Date = new Date()): void {
+  for (const t of s.tasks) {
+    const check = t.templateKey ? AUTO_DONE[t.templateKey] : undefined;
+    if (t.status === "todo" && check?.(s)) {
+      t.status = "done";
+      t.completedAt = now.toISOString();
+    }
+  }
+}
+
 /** Built-in task titles from version 1, mapped to today's task keys. */
 const LEGACY_TASK_TITLES: Record<string, string> = {
   "Form a legal entity (e.g. LLC)": "entity",
@@ -65,7 +76,6 @@ const LEGACY_TASK_TITLES: Record<string, string> = {
   "Confirm product safety & compliance": "compliance",
   "Register for sales tax": "sales_tax",
   "Create seller / store accounts": "seller_accounts",
-  "Set up a payment method for agent spending": "spend_card",
   "Approve product samples yourself": "samples",
 };
 
@@ -111,6 +121,8 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
           links: tpl ? tpl.links.map((l) => ({ ...l })) : (t.links ?? []),
           time: tpl ? tpl.time : (t.time ?? ""),
           templateKey: tpl ? tpl.key : (t.templateKey ?? null),
+          money: tpl ? (tpl.money ?? null) : (t.money ?? null),
+          waitsFor: tpl ? (tpl.waitsFor ?? null) : (t.waitsFor ?? null),
           description: tpl ? tpl.description : t.description,
           title: tpl ? tpl.title : t.title,
         };
@@ -135,6 +147,8 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
       }),
     };
   });
+  // Tick steps that are already satisfied by existing data (e.g. a deposit recorded before this step existed).
+  autoCompleteTasks(s);
   return s;
 }
 
@@ -286,6 +300,7 @@ export class Store {
     const draft = structuredClone(this.state);
     const before = new Set(this.state.activity.map((a) => a.id));
     const result = fn(draft);
+    autoCompleteTasks(draft);
     if (draft.activity.length > MAX_ACTIVITY) draft.activity = draft.activity.slice(-MAX_ACTIVITY);
     this.writeFile(draft);
     this.state = draft;

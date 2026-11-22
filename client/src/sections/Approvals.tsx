@@ -3,7 +3,7 @@ import { formatCents } from "../../../shared/money.ts";
 import type { ActionRequest, RequestStatus } from "../../../shared/types.ts";
 import type { SectionProps } from "../App.tsx";
 import { api } from "../api.ts";
-import { Badge, Card, EmptyState, Money, MoneyInput, PageHeader, formatDateTime } from "../components/ui.tsx";
+import { Badge, Card, EmptyState, Money, MoneyBadge, MoneyInput, PageHeader, formatDateTime } from "../components/ui.tsx";
 
 const STATUS: Record<RequestStatus, { label: string; tone: "good" | "warn" | "bad" | "info" | "neutral" }> = {
   approved: { label: "Approved — in progress", tone: "info" },
@@ -41,6 +41,12 @@ function PendingCard({ r, state, dash }: { r: ActionRequest } & Pick<SectionProp
     >
       {r.description ? <p>{r.description}</p> : <p className="muted">No description given.</p>}
       <div className="help">Held because: {r.reasons.join(" ")}</div>
+      {r.amountCents > 0 && (
+        <div className="row">
+          <MoneyBadge kind="moves" />
+          <span className="help">Approving lets the agent pay {formatCents(r.amountCents)} with the card or account it was given.</span>
+        </div>
+      )}
       {r.amountCents > 0 && (
         <div className="help">
           Agent budget remaining: <Money cents={af?.remainingCents ?? 0} /> · Cash: <Money cents={state.finance.cashBalanceCents} />

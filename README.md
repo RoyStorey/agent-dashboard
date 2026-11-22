@@ -12,6 +12,7 @@ You provide the money and the decisions only a person can make. The agents do th
 - **Financials**: P&L by period (gross sales, refunds, net sales, COGS, gross profit and margin, fees, ads, opex, net profit and margin), cash flow, KPIs (TACoS, ROAS, refund rate, average price, runway), and a unit-economics plan. The plan shows contribution margin, break-even price, break-even ad spend, break-even volume, ROI and scenarios.
 - **Discord**: an HQ channel for approvals, alerts and a daily finance summary, plus a channel per agent for its updates and reports.
 - **Guardrails**: a kill switch, global caps, approval thresholds and per-agent limits. A one-click recommended set is included.
+- **Money setup**: shows what is accounting only and what touches real money. It has the ordered steps to connect real money (business bank, Stripe Issuing cards for agents, a read-only Plaid bank connection, real sales reporting), each tagged *Moves real money*, *Reads real accounts* or *Accounting only*. It also shows which dashboard features are built. Stripe cards and the Plaid sync are **not built yet**; steps that depend on them say so.
 - **Funding**: deposits are split across agent budgets automatically by job, keeping a cash reserve. Adjust weights or any budget by hand, or rebalance in one click.
 - **Approvals** and **Activity**: what's waiting for you, and everything that happened.
 
