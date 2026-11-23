@@ -1,9 +1,10 @@
+import { liveStatus } from "../components/AgentLive.tsx";
 import { formatBps } from "../../../shared/economics.ts";
 import { formatCents } from "../../../shared/money.ts";
 import { computePnL } from "../../../shared/pnl.ts";
 import { setupSteps } from "./Setup.tsx";
 import type { SectionProps } from "../App.tsx";
-import { Badge, Card, EmptyState, Money, PageHeader, Stat, formatDateTime, timeAgo } from "../components/ui.tsx";
+import { Badge, Card, EmptyState, Money, PageHeader, Stat, formatDateTime } from "../components/ui.tsx";
 import { ActionList } from "./Todo.tsx";
 import { AgentStatusBadge } from "./Agents.tsx";
 
@@ -75,9 +76,14 @@ export function Overview({ state, go }: SectionProps) {
         <Card
           title={`Agent team (${active} of ${state.agents.length} active)`}
           actions={
-            <button className="btn btn-sm" onClick={() => go("agents")}>
-              Manage
-            </button>
+            <div className="row">
+              <button className="btn btn-sm" onClick={() => go("team")}>
+                See them work
+              </button>
+              <button className="btn btn-sm" onClick={() => go("agents")}>
+                Manage
+              </button>
+            </div>
           }
         >
           {state.agents.length === 0 ? (
@@ -97,9 +103,9 @@ export function Overview({ state, go }: SectionProps) {
                     </div>
                     <div className="grow">
                       <div className="title">{a.name}</div>
-                      <div className="muted">
-                        Seen {timeAgo(a.lastSeenAt, state.serverTime)}
-                        {a.lastStatusMessage ? ` · ${a.lastStatusMessage}` : ""}
+                      <div className={a.runtime.state === "working" ? "" : "muted"}>
+                        {liveStatus(state, a).detail}
+                        {a.runtime.state !== "working" && a.lastStatusMessage ? ` · ${a.lastStatusMessage}` : ""}
                       </div>
                     </div>
                     <div className="stack" style={{ alignItems: "flex-end", gap: 4 }}>

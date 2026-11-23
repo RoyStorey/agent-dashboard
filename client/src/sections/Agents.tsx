@@ -6,11 +6,13 @@ import type { SectionProps } from "../App.tsx";
 import { api } from "../api.ts";
 import { Badge, Card, EmptyState, Money, PageHeader, ProgressBar, timeAgo } from "../components/ui.tsx";
 import { AgentDetail } from "./AgentDetail.tsx";
+import { LiveBadge, liveStatus } from "../components/AgentLive.tsx";
 
 export function AgentStatusBadge({ state, agentId }: { state: StateResponse; agentId: string }) {
   const agent = state.agents.find((a) => a.id === agentId);
   const readiness = state.readiness.find((r) => r.agentId === agentId);
   if (!agent) return null;
+  if (agent.runtime.state === "working") return <LiveBadge status={liveStatus(state, agent)} />;
   if (agent.status === "active") {
     return state.guardrails.killSwitch ? <Badge tone="bad">Stopped</Badge> : <Badge tone="good">Active</Badge>;
   }
@@ -135,7 +137,11 @@ export function Agents(props: SectionProps & { agentId?: string }) {
                   </div>
                   <AgentStatusBadge state={state} agentId={a.id} />
                 </div>
-                <div className="muted">{a.description || "No description."}</div>
+                {a.runtime.state === "working" ? (
+                  <div style={{ fontSize: 13 }}>{liveStatus(state, a).detail}</div>
+                ) : (
+                  <div className="muted">{a.description || "No description."}</div>
+                )}
                 {r && r.missingInputs.length > 0 && (
                   <div className="help" style={{ color: "var(--bad-strong)" }}>
                     Missing: {r.missingInputs.join(", ")}

@@ -593,7 +593,8 @@ export type SectionKey =
   | "integrations"
   | "settings"
   | "money"
-  | "shipping";
+  | "shipping"
+  | "team";
 
 export interface AgentReadiness {
   agentId: string;

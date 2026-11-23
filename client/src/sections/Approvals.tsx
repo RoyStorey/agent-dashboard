@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { formatCents } from "../../../shared/money.ts";
-import type { ActionRequest, RequestStatus } from "../../../shared/types.ts";
+import type { ActionRequest, RequestStatus, StoreDraft } from "../../../shared/types.ts";
 import type { SectionProps } from "../App.tsx";
 import { api } from "../api.ts";
 import { Badge, Card, EmptyState, Money, MoneyBadge, MoneyInput, PageHeader, formatDateTime } from "../components/ui.tsx";
@@ -102,10 +102,46 @@ function CloseControls({ r, dash }: { r: ActionRequest; dash: SectionProps["dash
   );
 }
 
+function DraftCard({ d, state, dash }: { d: StoreDraft } & Pick<SectionProps, "state" | "dash">) {
+  const [note, setNote] = useState("");
+  const author = state.agents.find((a) => a.id === d.agentId)?.name ?? "Storefront";
+  return (
+    <Card
+      title={
+        <span className="row">
+          {d.kind === "product" ? "Product listing" : "Store page"}: {d.title}
+          {d.priceCents !== null && <Badge tone="info">{formatCents(d.priceCents)}</Badge>}
+        </span>
+      }
+      actions={<span className="muted">{formatDateTime(d.createdAt)}</span>}
+    >
+      <p className="muted" style={{ margin: 0 }}>
+        Drafted by {author}. It's hidden in your Shopify store; open Shopify admin → {d.kind === "product" ? "Products" : "Online Store → Pages"} to see it in full or edit it.
+      </p>
+      <p style={{ margin: 0 }}>{d.preview || <span className="muted">No text.</span>}</p>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="What to change (sent with a rejection)" aria-label="Note to the Storefront agent" />
+      <div className="form-actions">
+        <button className="btn btn-danger" onClick={() => void dash.run(() => api.rejectDraft(d.id, note), "Rejected. The agent will see your note.")}>
+          Reject
+        </button>
+        <button
+          className="btn btn-good-solid"
+          onClick={() => {
+            if (window.confirm(`Publish “${d.title}”? Customers will be able to see it.`)) void dash.run(() => api.publishDraft(d.id), "Published to your store.");
+          }}
+        >
+          Publish to store
+        </button>
+      </div>
+    </Card>
+  );
+}
+
 export function Approvals({ state, dash }: SectionProps) {
   const [filter, setFilter] = useState<"all" | RequestStatus>("all");
   const pending = state.requests.filter((r) => r.status === "pending_approval");
   const inProgress = state.requests.filter((r) => r.status === "approved");
+  const drafts = state.drafts.filter((d) => d.status === "pending");
   const history = state.requests.filter((r) => filter === "all" || r.status === filter);
 
   return (
@@ -115,8 +151,19 @@ export function Approvals({ state, dash }: SectionProps) {
         subtitle="Requests your guardrails held for a human decision. Approving re-checks every hard limit, so you can never approve past a budget or cap."
       />
 
+      {drafts.length > 0 && (
+        <>
+          <h2>Store drafts to review ({drafts.length})</h2>
+          <div className="grid grid-2">
+            {drafts.map((d) => (
+              <DraftCard key={d.id} d={d} state={state} dash={dash} />
+            ))}
+          </div>
+        </>
+      )}
+
       {pending.length === 0 ? (
-        <EmptyState title="Nothing waiting for approval" />
+        <EmptyState title={drafts.length ? "No other requests waiting" : "Nothing waiting for approval"} />
       ) : (
         <div className="grid grid-2">
           {pending.map((r) => (

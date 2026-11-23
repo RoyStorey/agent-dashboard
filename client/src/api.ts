@@ -97,6 +97,14 @@ export const api = {
   backups: () => call<{ backups: BackupInfo[] }>("GET", "/api/backups"),
   startOver: (keepCredentials: boolean) => call<StateResponse>("POST", "/api/reset", { confirm: "START OVER", keepCredentials }),
   restoreBackup: (name: string) => call<StateResponse>("POST", `/api/backups/${encodeURIComponent(name)}/restore`),
+  runAgent: (id: string) => call<StateResponse>("POST", `/api/agents/${id}/run`),
+  stopAgent: (id: string) => call<StateResponse>("POST", `/api/agents/${id}/stop`),
+  setSchedule: (id: string, schedule: { enabled?: boolean; everyMinutes?: number; maxRunsPerDay?: number }) =>
+    call<StateResponse>("PUT", `/api/agents/${id}/schedule`, schedule),
+  updatePlan: (plan: { phase?: string; brief?: string }) => call<StateResponse>("PUT", "/api/team/plan", plan),
+  addNote: (to: string[], text: string) => call<StateResponse>("POST", "/api/team/notes", { to, text }),
+  publishDraft: (id: string) => call<StateResponse>("POST", `/api/drafts/${id}/publish`),
+  rejectDraft: (id: string, note: string) => call<StateResponse>("POST", `/api/drafts/${id}/reject`, { note }),
   deleteBackup: (name: string) => call<{ backups: BackupInfo[] }>("DELETE", `/api/backups/${encodeURIComponent(name)}`),
 };
 

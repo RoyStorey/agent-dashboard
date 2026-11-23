@@ -18,6 +18,7 @@ import { Overview } from "./sections/Overview.tsx";
 import { Settings } from "./sections/Settings.tsx";
 import { Shipping } from "./sections/Shipping.tsx";
 import { Setup, setupSteps } from "./sections/Setup.tsx";
+import { Team } from "./sections/Team.tsx";
 import { Todo } from "./sections/Todo.tsx";
 import { useTheme } from "./theme.ts";
 
@@ -40,6 +41,7 @@ const NAV: NavItem[] = [
   { key: "business", label: "Business & product", group: "Business" },
   { key: "financials", label: "Financials", group: "Business" },
   { key: "shipping", label: "Pack & ship", group: "Business" },
+  { key: "team", label: "Team at work", group: "Agents" },
   { key: "agents", label: "Agent team", group: "Agents" },
   { key: "approvals", label: "Approvals", group: "Agents" },
   { key: "activity", label: "Activity", group: "Agents" },
@@ -106,13 +108,14 @@ export function App() {
       alert: state.ownerActions.some((a) => a.severity === "blocker"),
     },
     agents: { n: state.agents.length, alert: false },
+    team: { n: state.agents.filter((a) => a.runtime.state === "working").length, alert: false },
     setup: { n: setupLeft, alert: false },
     shipping: { n: state.shipments.filter((s) => s.status === "to_pack").length, alert: state.shipments.some((s) => s.status === "to_pack") },
     money: { n: state.tasks.filter((t) => t.category === "money" && t.status === "todo" && !t.waitsFor).length, alert: false },
     credentials: { n: new Set(state.readiness.flatMap((r) => r.missingVaultKeys)).size, alert: false },
     approvals: {
-      n: state.requests.filter((r) => r.status === "pending_approval").length,
-      alert: state.requests.some((r) => r.status === "pending_approval"),
+      n: state.requests.filter((r) => r.status === "pending_approval").length + state.drafts.filter((d) => d.status === "pending").length,
+      alert: state.requests.some((r) => r.status === "pending_approval") || state.drafts.some((d) => d.status === "pending"),
     },
   };
 
@@ -218,6 +221,7 @@ export function App() {
           {section === "todo" && <Todo {...props} />}
           {section === "business" && <Business {...props} />}
           {section === "financials" && <Financials {...props} />}
+          {section === "team" && <Team {...props} />}
           {section === "agents" && <Agents {...props} agentId={route.agentId} />}
           {section === "approvals" && <Approvals {...props} />}
           {section === "activity" && <Activity {...props} />}
