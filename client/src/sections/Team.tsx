@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { formatCents } from "../../../shared/money.ts";
 import { PHASES, PHASE_GOAL, PHASE_LABEL, ROLE_FIRST_PHASE, SCHEDULE_CHOICES } from "../../../shared/team.ts";
-import type { AgentRun, AgentView, StateResponse } from "../../../shared/types.ts";
+import type { AgentRun, AgentView, QueueEntry, QueueTodo, StateResponse } from "../../../shared/types.ts";
 import type { SectionProps } from "../App.tsx";
 import { api } from "../api.ts";
 import { LiveBadge, elapsed, liveStatus } from "../components/AgentLive.tsx";
@@ -10,9 +10,166 @@ import { Badge, Card, EmptyState, PageHeader, formatDateTime } from "../componen
 const RUN_TONE: Record<AgentRun["status"], "good" | "warn" | "bad" | "info"> = { running: "info", done: "good", stopped: "warn", error: "bad" };
 const RUN_LABEL: Record<AgentRun["status"], string> = { running: "Working", done: "Done", stopped: "Stopped", error: "Failed" };
 
+/** "next minute", "in 4 min", "at 6:12 PM", "Tue 6:12 PM". */
+export function whenLabel(at: string | null, nowIso: string): string {
+  if (!at) return "when it can";
+  const diff = new Date(at).getTime() - new Date(nowIso).getTime();
+  if (diff <= 90_000) return "next minute";
+  if (diff < 60 * 60_000) return `in ${Math.round(diff / 60_000)} min`;
+  const d = new Date(at);
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  return d.toDateString() === new Date(nowIso).toDateString() ? `at ${time}` : `${d.toLocaleDateString(undefined, { weekday: "short" })} ${time}`;
+}
+
+/** One plain sentence about what's next for an agent. */
+function nextLine(q: QueueEntry | undefined, nowIso: string): string | null {
+  if (!q) return null;
+  switch (q.lane) {
+    case "now":
+      return null;
+    case "next":
+      return q.waitingFor && !q.at ? `Up next: ${q.reason}. ${q.waitingFor}` : `Starts ${whenLabel(q.at, nowIso)}: ${q.reason}.`;
+    case "later":
+      return q.reason ? `Starts ${whenLabel(q.at, nowIso)}: ${q.reason}.${q.waitingFor ? ` ${q.waitingFor}` : ""}` : `Next check ${whenLabel(q.at, nowIso)}. It only runs if something changed.`;
+    default:
+      return q.waitingFor;
+  }
+}
+
+const TODO_ICON: Record<QueueTodo["kind"], string> = { continue: "↻", note: "✉", finish: "☐", owner: "⏳" };
+
+function TodoList({ todo }: { todo: QueueTodo[] }) {
+  if (!todo.length) return null;
+  return (
+    <ul className="todo-list">
+      {todo.map((x, i) => (
+        <li key={i} className={`todo-${x.kind}`}>
+          <span aria-hidden>{TODO_ICON[x.kind]}</span> {x.text}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function QueueBoard({ state, go }: Pick<SectionProps, "state" | "go">) {
+  const now = state.serverTime;
+  const byId = new Map(state.agents.map((a) => [a.id, a]));
+  const entries = state.queue.filter((q) => byId.has(q.agentId));
+  const working = entries.filter((q) => q.lane === "now");
+  const next = entries
+    .filter((q) => q.lane === "next")
+    .sort((a, b) => (a.at && b.at ? a.at.localeCompare(b.at) : a.at ? -1 : b.at ? 1 : 0));
+  const later = entries.filter((q) => q.lane === "later").sort((a, b) => (a.at ?? "").localeCompare(b.at ?? ""));
+  const blocked = entries.filter((q) => q.lane === "blocked" || q.lane === "off");
+  const yours = [
+    ...state.requests
+      .filter((r) => r.status === "pending_approval")
+      .map((r) => ({
+        id: r.id,
+        who: byId.get(r.agentId)?.name ?? "An agent",
+        text: r.action === "advance_phase" ? "wants to move the team to the next phase" : `asks: ${byId.get(r.agentId)?.actions.find((a) => a.key === r.action)?.label ?? r.action}${r.amountCents ? ` (${formatCents(r.amountCents)})` : ""}`,
+      })),
+    ...state.drafts.filter((d) => d.status === "pending").map((d) => ({ id: d.id, who: byId.get(d.agentId)?.name ?? "Storefront", text: `drafted “${d.title}” for your review` })),
+  ];
+  const name = (q: QueueEntry) => byId.get(q.agentId)!.name;
+  const step = (q: QueueEntry) => byId.get(q.agentId)!.runtime.step;
+
+  return (
+    <Card title="Queue">
+      <div className="queue">
+        <section className="lane lane-now" aria-label="Working now">
+          <h3>
+            Working now <span className="lane-count">{working.length}</span>
+          </h3>
+          {working.length === 0 && <p className="muted lane-empty">Nobody is working right now.</p>}
+          {working.map((q) => (
+            <div key={q.agentId} className="qcard qcard-now">
+              <div className="row between">
+                <strong>
+                  <span className="live-dot" aria-hidden />
+                  {name(q)}
+                </strong>
+                <span className="muted">{elapsed(q.at, now)}</span>
+              </div>
+              <div className="qstep">{step(q) ?? "Working"}</div>
+              {q.reason && <div className="help">Task: {q.reason}</div>}
+            </div>
+          ))}
+        </section>
+
+        <section className="lane" aria-label="Up next">
+          <h3>
+            Up next <span className="lane-count">{next.length}</span>
+          </h3>
+          {next.length === 0 && <p className="muted lane-empty">Nothing queued. Agents start when something new comes in.</p>}
+          <ol className="qlist">
+            {next.map((q) => (
+              <li key={q.agentId} className="qcard">
+                <div className="row between">
+                  <strong>{name(q)}</strong>
+                  <Badge tone={q.at ? "info" : "neutral"}>{q.at ? whenLabel(q.at, now) : "waiting"}</Badge>
+                </div>
+                <div>{q.reason}</div>
+                {q.waitingFor && <div className="help">{q.waitingFor}</div>}
+                <TodoList todo={q.todo.filter((x) => x.kind !== "owner")} />
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="lane lane-you" aria-label="Waiting on you">
+          <h3>
+            Waiting on you <span className={`lane-count ${yours.length ? "alert" : ""}`}>{yours.length}</span>
+          </h3>
+          {yours.length === 0 && <p className="muted lane-empty">Nothing needs you right now.</p>}
+          {yours.map((y) => (
+            <div key={y.id} className="qcard qcard-you">
+              <div>
+                <strong>{y.who}</strong> {y.text}
+              </div>
+            </div>
+          ))}
+          {yours.length > 0 && (
+            <button className="btn btn-sm btn-primary" onClick={() => go("approvals")}>
+              Review on Approvals
+            </button>
+          )}
+        </section>
+      </div>
+
+      {(later.length > 0 || blocked.length > 0) && (
+        <details className="later">
+          <summary>
+            Later:{" "}
+            {[later.length ? `${later.length} scheduled check${later.length === 1 ? "" : "s"}` : "", blocked.length ? `${blocked.length} not running yet` : ""].filter(Boolean).join(", ")}
+          </summary>
+          <div className="table-wrap">
+            <table>
+              <tbody>
+                {later.map((q) => (
+                  <tr key={q.agentId}>
+                    <td style={{ whiteSpace: "nowrap" }}>{name(q)}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>{whenLabel(q.at, now)}</td>
+                    <td className="muted">{q.reason ? `${q.reason}.${q.waitingFor ? ` ${q.waitingFor}` : ""}` : "Checks for new work; only runs if something changed."}</td>
+                  </tr>
+                ))}
+                {blocked.map((q) => (
+                  <tr key={q.agentId}>
+                    <td style={{ whiteSpace: "nowrap" }}>{name(q)}</td>
+                    <td style={{ whiteSpace: "nowrap" }}>{q.lane === "off" ? "Not scheduled" : "Not yet"}</td>
+                    <td className="muted">{q.waitingFor}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+    </Card>
+  );
+}
+
 export function Team({ state, dash, go }: SectionProps) {
-  const pendingDrafts = state.drafts.filter((d) => d.status === "pending").length;
-  const pendingPhase = state.requests.find((r) => r.action === "advance_phase" && r.status === "pending_approval");
   const working = state.agents.filter((a) => a.runtime.state === "working").length;
   return (
     <>
@@ -20,17 +177,7 @@ export function Team({ state, dash, go }: SectionProps) {
         title="Team at work"
         subtitle="What each agent is doing right now, and when it last worked. Agents check for new work on a schedule; a check that finds nothing new is free, so idle agents cost nothing."
       />
-      {(pendingDrafts > 0 || pendingPhase) && (
-        <div className="banner banner-warn">
-          <span>
-            {pendingPhase && <>The Orchestrator wants to move the team on. </>}
-            {pendingDrafts > 0 && <>{pendingDrafts} store draft{pendingDrafts === 1 ? " is" : "s are"} waiting for you. </>}
-          </span>
-          <button className="btn btn-sm" onClick={() => go("approvals")}>
-            Review on Approvals
-          </button>
-        </div>
-      )}
+      <QueueBoard state={state} go={go} />
       <PhaseCard state={state} dash={dash} go={go} />
       <Card title={`The team${working ? ` · ${working} working now` : ""}`}>
         {state.agents.length === 0 ? (
@@ -163,7 +310,16 @@ function AgentRow({ agent, state, dash, go }: SectionProps & { agent: AgentView 
         <div className={live.working ? "" : "muted"} style={{ fontSize: 13 }}>
           {live.detail}
         </div>
-        {live.note && <div className="help">{live.note}</div>}
+        {(() => {
+          const q = state.queue.find((x) => x.agentId === agent.id);
+          const line = nextLine(q, state.serverTime);
+          return (
+            <>
+              {line && <div className="help next-line">{line}</div>}
+              {q && <TodoList todo={q.todo} />}
+            </>
+          );
+        })()}
         {lastRun && !live.working && (
           <div className="help">
             Last run {formatDateTime(lastRun.startedAt)} ({formatCents(lastRun.costCents)}): {lastRun.summary || lastRun.error || RUN_LABEL[lastRun.status]}

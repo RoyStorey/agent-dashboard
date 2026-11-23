@@ -202,6 +202,25 @@ export interface AgentRun {
   error: string | null;
 }
 
+export interface QueueTodo {
+  kind: "continue" | "note" | "finish" | "owner";
+  text: string;
+}
+
+/** Where an agent stands in the team's queue (computed by the runner, never stored). */
+export interface QueueEntry {
+  agentId: string;
+  /** now = working; next = starts soon; later = next scheduled check; blocked = can't run yet; off = not running on its own. */
+  lane: "now" | "next" | "later" | "blocked" | "off";
+  /** When it started (now) or will start or check (next/later). null when unknown. */
+  at: string | null;
+  /** What it's working on, or what it will work on. */
+  reason: string | null;
+  /** Why it isn't starting yet. */
+  waitingFor: string | null;
+  todo: QueueTodo[];
+}
+
 /** Something the Storefront agent created in Shopify as a hidden draft, waiting for the owner. */
 export interface StoreDraft {
   id: string;
@@ -658,6 +677,7 @@ export interface StateResponse {
   supplies: SupplyItem[];
   shopify: ShopifySettings;
   plan: TeamPlan;
+  queue: QueueEntry[];
   /** Newest first. */
   notebook: NoteEntry[];
   /** Newest first, the last 100 runs. */

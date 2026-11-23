@@ -457,6 +457,7 @@ export function createApp(opts: AppOptions): express.Express {
       supplies: s.supplies,
       shopify: s.shopify,
       plan: s.plan,
+      queue: runner.queue(s),
       notebook: s.notebook.slice(-100).reverse(),
       runs: s.runs.slice(-100).reverse(),
       drafts: [...s.drafts].reverse(),

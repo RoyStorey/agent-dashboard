@@ -49,7 +49,7 @@ export function checkWork(s: DashboardState, agent: Agent, now: Date): WorkCheck
   const reasons: string[] = [];
   const role = agent.role;
 
-  if (!agent.runtime.lastRunAt) urgent.push("first run");
+  if (!agent.runtime.lastRunAt) urgent.push("getting started");
   if (agent.runtime.followUp) urgent.push(`continuing: ${agent.runtime.followUp}`);
   const notes = s.notebook.filter((n) => after(n.at) && n.authorId !== agent.id && (n.to.includes(role) || n.to.includes("all")));
   if (notes.length) urgent.push(`${notes.length} new note${notes.length === 1 ? "" : "s"} for you`);

@@ -87,7 +87,7 @@ describe("agent runner", () => {
     const t = setup(
       {
         Orchestrator: async (req, call) => {
-          if (!req.user.includes("First run")) return "Checked in; all on track.";
+          if (!req.user.includes("Getting started")) return "Checked in; all on track.";
           assert.equal(await call("set_brief", { brief: "Confirm demand for braided USB-C cables." }), "Brief updated.");
           assert.equal(await call("write_note", { to: ["research"], text: "Check competitor prices on Amazon." }), "Note saved.");
           return "Set the brief and asked Research for prices.";
@@ -109,7 +109,7 @@ describe("agent runner", () => {
     assert.equal(run.costCents, 1);
     assert.equal(t.agent("orchestrator").runtime.state, "idle");
     assert.match(t.agent("storefront").runtime.lastSkip ?? "", /Build the store/);
-    assert.ok(s.activity.some((a) => a.message.startsWith("Started working: First run")));
+    assert.ok(s.activity.some((a) => a.message.startsWith("Started working: Getting started")));
     assert.ok(s.activity.some((a) => a.kind === "report" && a.title === "Orchestrator finished"));
 
     // A minute later Research starts, with the brief and the note in its briefing.
@@ -118,7 +118,7 @@ describe("agent runner", () => {
     assert.equal(t.calls.at(-1)!.agent, "Research");
     assert.match(t.calls.at(-1)!.req.user, /Team brief: Confirm demand/);
     assert.match(t.calls.at(-1)!.req.user, /Check competitor prices on Amazon/);
-    assert.match(t.store.get().runs.at(-1)!.reason, /First run; 1 new note for you/);
+    assert.match(t.store.get().runs.at(-1)!.reason, /Getting started; 1 new note for you/);
 
     // Research's findings wake the Orchestrator after the short pause, not on its 6-hour schedule.
     t.advance(6);
@@ -348,6 +348,43 @@ describe("agent runner", () => {
     assert.equal(t.agent("research").runtime.state, "idle");
   });
 
+  it("shows what's running, what starts next and why, and what each agent has to do", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const t = setup(
+      {
+        Orchestrator: async (_r, call) => {
+          await call("write_note", { to: ["research"], text: "Scan Amazon prices." });
+          await gate;
+          return "Planned.";
+        },
+      },
+      ["orchestrator", "research", "storefront"],
+    );
+    const lanes = () => Object.fromEntries(t.runner.queue(t.store.get()).map((q) => [t.store.get().agents.find((a) => a.id === q.agentId)!.role, q]));
+    let q = lanes();
+    assert.equal(q.orchestrator!.lane, "next");
+    assert.match(q.orchestrator!.reason!, /Getting started/);
+    assert.equal(q.research!.lane, "next");
+    assert.equal(q.research!.waitingFor, "Waiting for the Orchestrator to finish planning.");
+    assert.equal(q.storefront!.lane, "blocked");
+    assert.match(q.storefront!.waitingFor!, /Build the store/);
+
+    t.runner.tick();
+    await new Promise((r) => setTimeout(r, 0));
+    q = lanes();
+    assert.equal(q.orchestrator!.lane, "now");
+    assert.deepEqual(q.research!.todo, [{ kind: "note", text: "Orchestrator: Scan Amazon prices." }]);
+    const st = (await request(t.app).get("/api/state")).body as StateResponse;
+    assert.equal(st.queue.length, 3, "the queue is part of the dashboard state");
+    release();
+    await t.runner.settle();
+    q = lanes();
+    assert.equal(q.orchestrator!.lane, "later");
+    assert.equal(q.research!.lane, "next");
+    assert.equal(q.research!.waitingFor, null);
+  });
+
   it("keeps the system prompt stable between runs so it can be cached, and the briefing compact", async () => {
     const t = setup({}, ["orchestrator", "research"]);
     const s = t.store.get();
@@ -355,7 +392,7 @@ describe("agent runner", () => {
     assert.equal(systemPrompt(s, a), systemPrompt(t.store.get(), a));
     assert.ok(!/\d{4}-\d{2}-\d{2}/.test(systemPrompt(s, a)), "no dates in the cached part");
     assert.ok(!systemPrompt(s, a).includes("sk-ant"), "never includes secrets");
-    const b = briefing(s, a, "First run", new Date());
+    const b = briefing(s, a, "Getting started", new Date());
     assert.ok(b.length < 2500, `briefing is ${b.length} characters`);
   });
 });
