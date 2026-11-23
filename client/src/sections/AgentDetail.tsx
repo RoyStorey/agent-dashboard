@@ -409,10 +409,14 @@ function ConnectTab({ agent, dash }: Props) {
               <option value="Other">Other (enter the key on Inputs)</option>
             </select>
           </Field>
-          <Field label="Model" htmlFor="c-model">
+          <Field
+            label="Model"
+            htmlFor="c-model"
+            help={conn.provider === "Anthropic" ? "The dashboard runs this agent itself with this model: claude-opus-5-5 (default), claude-sonnet-5-5, claude-haiku-5-5 (cheapest) or claude-fable-5-2 (most capable, priciest)." : "The built-in runner only uses Claude. With another provider, run your own program with the API token below."}
+          >
             <input id="c-model" value={conn.model} onChange={(e) => setConn({ ...conn, model: e.target.value })} placeholder={conn.provider === "Anthropic" ? "claude-opus-5-5" : "Model ID from your provider"} />
           </Field>
-          <Field label="Where it runs" htmlFor="c-runtime" help="For your reference: a script on this computer, a server, a scheduled job…">
+          <Field label="Where it runs" htmlFor="c-runtime" help="For your reference. Leave empty when the dashboard runs it (Claude); otherwise note where your own program runs.">
             <input id="c-runtime" value={conn.runtime} onChange={(e) => setConn({ ...conn, runtime: e.target.value })} />
           </Field>
         </div>

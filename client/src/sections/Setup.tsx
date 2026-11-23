@@ -308,7 +308,7 @@ export function Setup({ state, dash, go }: SectionProps) {
       <Step n={++n} step={s("live")} open={isOpen("live")}>
         {readyDrafts.length > 0 ? (
           <>
-            <p className="muted">Ready: {readyDrafts.map((a) => a.name).join(", ")}. Then give each agent's token to the program that runs it (Agent team → agent → Connect).</p>
+            <p className="muted">Ready: {readyDrafts.map((a) => a.name).join(", ")}. Once active, they start working on their own within a minute. Watch them on Team at work.</p>
             <div>
               <button className="btn btn-good-solid" onClick={() => void dash.run(() => api.activateReady(), "Agents activated.")}>
                 Activate {readyDrafts.length} ready agent{readyDrafts.length === 1 ? "" : "s"}

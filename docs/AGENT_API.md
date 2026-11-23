@@ -1,5 +1,7 @@
 # Agent API reference
 
+You don't need this to use the dashboard: it runs your agents itself with Claude (see "How the agents work" in the README). This API is for agents you run yourself. Those agents get the same guardrails, approvals and logging.
+
 Base URL: `http://127.0.0.1:4317/api/agent/v1` (or wherever the dashboard runs).
 
 Every request must include the agent's token:

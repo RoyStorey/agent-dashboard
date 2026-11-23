@@ -9,6 +9,7 @@ You provide the money and the decisions only a person can make. The agents do th
 - **Where to sell**: compare Shopify, Etsy, Amazon, eBay, Walmart Marketplace and TikTok Shop side by side: monthly cost, typical fees, how hard approval is, pros and cons, and links. Pick one or more; the first is your primary. Each one adds an "Open your account" step to the checklist. Agents use your selected channels' credentials, ads platform and fulfillment, and never a key for a channel you don't sell on. One click puts a channel's typical fees into your plan. Note: Etsy only allows handmade, your own designs, vintage, or craft supplies.
 - **Pack & ship**: choose how orders get shipped. With **Ship it myself**, the Inventory agent queues every order with what to put in the box, which mailer and which shipping service. It also posts new orders to Discord HQ (never the customer's address), tracks stock at home and asks your approval to buy supplies before you run out, with a ready-to-use shopping list. You pack, print the label in Shopify and click "Dropped off / shipped", and product, mailer and label counts update themselves. A fulfillment company's key isn't needed in this mode. **Connect Shopify** on the same page to import paid, unshipped Shopify orders every 5 minutes, with the address and items copied exactly. It uses the store address, Client ID and Client secret saved on Credentials, gets a short-lived access token with Shopify's client credentials grant, and never adds an order twice.
 - **Credentials**: paste each key once (Anthropic, OpenAI, Google, Amazon, Shopify, Keepa, QuickBooks, ShipBob…). Every agent that needs it picks it up automatically. Each service has a direct link, exact steps, and the exact format to paste.
+- **Team at work**: once you activate agents, they work on their own. A live board shows what each agent is doing right now ("Working: Creating a product draft… for 40s") or, when it isn't, "Idle", when it was last seen, why it's idle and when it checks next. It also has the team's current phase and brief, the shared notebook agents use to hand work to each other, and a work log of every run: why it started, each step, tokens and cost.
 - **Agent team**: add the recommended team of 8 in one click (Orchestrator, Research, Sourcing, Storefront, Marketing, Customer Service, Inventory, Finance) or build custom agents. Details are auto-filled from your profile and plan, so you only answer what nobody else can.
 - **Things you need to do**: a live list of what the business still needs from you. The legal and account steps (LLC, EIN, bank, insurance, compliance, seller accounts) each have exact steps and direct links.
 - **Financials**: P&L by period (gross sales, refunds, net sales, COGS, gross profit and margin, fees, ads, opex, net profit and margin), cash flow, KPIs (TACoS, ROAS, refund rate, average price, runway), and a unit-economics plan. The plan shows contribution margin, break-even price, break-even ad spend, break-even volume, ROI and scenarios.
@@ -16,7 +17,7 @@ You provide the money and the decisions only a person can make. The agents do th
 - **Guardrails**: a kill switch, global caps, approval thresholds and per-agent limits. A one-click recommended set is included.
 - **Money setup**: shows what is accounting only and what touches real money. It has the ordered steps to connect real money (business bank, Stripe Issuing cards for agents, a read-only Plaid bank connection, real sales reporting), each tagged *Moves real money*, *Reads real accounts* or *Accounting only*. It also shows which dashboard features are built. Stripe cards and the Plaid sync are **not built yet**; steps that depend on them say so.
 - **Funding**: deposits are split across agent budgets automatically by job, keeping a cash reserve. Adjust weights or any budget by hand, or rebalance in one click.
-- **Approvals** and **Activity**: what's waiting for you, and everything that happened.
+- **Approvals** and **Activity**: what's waiting for you (spending, phase changes, and Shopify product and page drafts to publish or reject), and everything that happened.
 
 Light and dark mode: use the ☾ Dark / ☀ Light button in the top bar. Your choice is remembered; until you pick one, it follows your computer's setting.
 
@@ -51,13 +52,36 @@ Open the dashboard and follow the **Setup assistant**:
 7. **Fund it.** Enter a starting budget; it is split across agents automatically.
 8. **Spending caps.** One click applies 75% of cash per month and 35% per day.
 9. **Discord** (optional). Paste one webhook per channel.
-10. **Go live.** Activate the ready agents, then give each agent's token to the program that runs it.
+10. **Go live.** Activate the ready agents. They start working on their own within a minute (see **Team at work**).
 
 Then work through **Things you need to do** for the legal and account steps.
 
-## How agents connect
+## How the agents work
 
-Agents talk to the dashboard over a small HTTP API, authenticated with their own bearer token. Any agent in any language can use it:
+The dashboard runs the agents itself, with Claude, while it's open (`npm run serve` or `npm run dev`). If your computer sleeps or the dashboard is closed, nothing runs and nothing is spent; agents pick up where they left off when it starts again.
+
+**Phases.** The team works through Research → Sourcing & samples → Build the store → Launch → Run & grow. Each agent starts in its phase (for example, Storefront starts at Build the store) and stays idle, at no cost, until then. The Orchestrator proposes moving on when a phase's goal is met; you approve it on Approvals, or move the team yourself on Team at work.
+
+**Shared context.** The Orchestrator keeps a short team brief every agent reads. Agents leave each other notes in the team notebook ("Sourcing: here are three UL-listed suppliers…"). You can write notes too. A note wakes the agents it's addressed to.
+
+**What agents can do.** Agents can't pay for anything or contact anyone outside the team. They ask for approval through your guardrails, and when you must act (pay a supplier, order samples), they give you exact steps in a note. Research, Sourcing and Marketing can search the web. Storefront creates products and pages in your Shopify store as hidden drafts, which you publish or reject on Approvals; it can't price below your price floor. Finance can read Shopify sales totals (no customer details).
+
+Storefront drafts need two extra Shopify permissions. On your app in the Shopify Dev Dashboard, add `read_online_store_pages,write_online_store_pages` to the scopes (the Copy button on Credentials has the full list), release a new version, and install the update on your store.
+
+### Keeping AI costs low
+
+- **Free checks.** Every minute the dashboard checks, in plain code, whether each agent has anything new: a note for it, a decision you made on its request, a new phase, new orders, low stock, or a periodic review. Only then does it call Claude. An agent with nothing new costs nothing.
+- **Small, cached prompts.** Each run starts with a short briefing of only what's new. The part that doesn't change (the agent's job and rules) is cached, so later steps of a run read it at a tenth of the price.
+- **Limits per role.** Routine roles (Inventory, Finance, Customer Service) think less; each role has a cap on steps, reply length and web searches. Agents write at most 4 notes and 3 store drafts per run.
+- **Your controls.** On Team at work, set how often each agent checks (hourly to weekly, or only when you click Run now). Each agent runs at most 6 times a day on its own (Run now isn't limited). A teammate's note wakes an agent early only once 30 minutes have passed since its last run. At most two agents work at once. Your monthly AI budget on Guardrails stops runs as soon as it's reached, and the kill switch or pausing an agent stops a run mid-way.
+
+Every run's tokens and cost are on Team at work, and AI spend is in Financials.
+
+The built-in runner needs the agent's provider set to Anthropic and a Claude model it knows the price of, so it can keep to your budget.
+
+## Connecting your own agents
+
+You can also run an agent yourself (any language, any model) instead of the built-in runner. Agents talk to the dashboard over a small HTTP API, authenticated with their own bearer token. Any agent in any language can use it:
 
 1. `GET /api/agent/v1/config` to get the business profile, its inputs, allowed actions, guardrails and budget.
 2. `POST /api/agent/v1/actions` before every real-world action. The response is `approved`, `pending_approval` or `denied`, with reasons.
