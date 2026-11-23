@@ -154,6 +154,8 @@ export class AgentRunner {
     const runId = newId();
     const snapshot = this.store.mutate((s) => {
       const agent = agentById(s, agentId);
+      // Build the prompts first: the briefing shows what's new since the *previous* run.
+      const prompts = { system: systemPrompt(s, agent), user: briefing(s, agent, reason, t) };
       s.runs.push({
         id: runId,
         agentId,
@@ -180,7 +182,7 @@ export class AgentRunner {
         lastSkip: null,
       };
       log(s, agent.name, "info", `Started working: ${reason}.`, t, { kind: "log", agentId });
-      return { system: systemPrompt(s, agent), user: briefing(s, agent, reason, t), agent: structuredClone(agent), state: s };
+      return { ...prompts, agent: structuredClone(agent), state: s };
     });
     const controller = new AbortController();
     const entry = { controller, stopReason: null as string | null, done: Promise.resolve() };
