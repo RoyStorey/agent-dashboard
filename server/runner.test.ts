@@ -92,12 +92,14 @@ describe("agent runner", () => {
           assert.equal(await call("write_note", { to: ["research"], text: "Check competitor prices on Amazon." }), "Note saved.");
           return "Set the brief and asked Research for prices.";
         },
-        Research: async () => "Waiting for the brief.",
+        Research: async (_req, call) => (await call("write_note", { to: ["orchestrator"], text: "Prices are $15-22." }), "Sent prices."),
       },
       ["orchestrator", "research", "storefront"],
     );
-    await t.tick();
-    assert.deepEqual(t.calls.map((c) => c.agent).sort(), ["Orchestrator", "Research"], "storefront waits for its phase");
+    t.runner.tick();
+    assert.equal(t.agent("research").runtime.lastSkip, "Waiting for the Orchestrator to finish planning.", "teammates wait for the brief");
+    await t.runner.settle();
+    assert.deepEqual(t.calls.map((c) => c.agent), ["Orchestrator"], "storefront waits for its phase; research for the brief");
     const s = t.store.get();
     assert.equal(s.plan.brief, "Confirm demand for braided USB-C cables.");
     const run = s.runs.find((r) => r.agentId === t.agent("orchestrator").id)!;
@@ -106,28 +108,62 @@ describe("agent runner", () => {
     assert.deepEqual(run.steps.map((x) => x.text), ["Updating the team brief", "Writing a note to research"]);
     assert.equal(run.costCents, 1);
     assert.equal(t.agent("orchestrator").runtime.state, "idle");
-    assert.ok(t.agent("orchestrator").runtime.lastRunAt);
     assert.match(t.agent("storefront").runtime.lastSkip ?? "", /Build the store/);
     assert.ok(s.activity.some((a) => a.message.startsWith("Started working: First run")));
     assert.ok(s.activity.some((a) => a.kind === "report" && a.title === "Orchestrator finished"));
-    assert.equal(s.aiUsage.length, 2);
+
+    // A minute later Research starts, with the brief and the note in its briefing.
+    t.advance(1);
+    await t.tick();
+    assert.equal(t.calls.at(-1)!.agent, "Research");
+    assert.match(t.calls.at(-1)!.req.user, /Team brief: Confirm demand/);
+    assert.match(t.calls.at(-1)!.req.user, /Check competitor prices on Amazon/);
+    assert.match(t.store.get().runs.at(-1)!.reason, /First run; 1 new note for you/);
+
+    // Research's findings wake the Orchestrator after the short pause, not on its 6-hour schedule.
+    t.advance(6);
+    await t.tick();
+    assert.equal(t.calls.at(-1)!.agent, "Orchestrator");
+    assert.match(t.store.get().runs.at(-1)!.reason, /1 new note for you/);
 
     // Nothing new: the next checks are free.
-    t.advance(24 * 60);
-    t.tick();
-    await t.runner.settle();
-    // Research has a new note (written after its run started), so it runs; the Orchestrator only does its daily check-in.
-    const names = t.calls.slice(2).map((c) => c.agent).sort();
-    assert.deepEqual(names, ["Orchestrator", "Research"]);
-    const researchRun = t.store.get().runs.filter((r) => r.agentId === t.agent("research").id).at(-1)!;
-    assert.match(researchRun.reason, /1 new note for you/);
-    assert.match(t.calls.find((c, i) => i >= 2 && c.agent === "Research")!.req.user, /Check competitor prices on Amazon/);
-
     const before = t.calls.length;
+    t.advance(60);
+    await t.tick();
+    assert.equal(t.calls.length, before);
     t.advance(24 * 60 * 2);
     await t.tick();
     assert.equal(t.calls.length - before, 1, "only the Orchestrator's daily check-in; Research has nothing new");
     assert.equal(t.agent("research").runtime.lastSkip, "Nothing new since its last run.");
+  });
+
+  it("lets an agent that isn't finished continue a few minutes later", async () => {
+    let n = 0;
+    const t = setup(
+      {
+        Research: async (req, call) => {
+          n++;
+          if (n === 1) return (await call("keep_working", { remaining: "Check Walmart prices" })) && "Did Amazon; Walmart next.";
+          assert.match(req.user, /continuing: Check Walmart prices/);
+          assert.match(req.user, /Your last session .*Did Amazon; Walmart next\./);
+          return "Done with prices.";
+        },
+      },
+      ["research"],
+    );
+    await t.tick();
+    assert.equal(t.agent("research").runtime.followUp, "Check Walmart prices");
+    assert.match(t.agent("research").runtime.lastSkip ?? "", /Continuing in a few minutes/);
+    t.advance(2);
+    await t.tick();
+    assert.equal(n, 1, "short pause first");
+    t.advance(4);
+    await t.tick();
+    assert.equal(n, 2);
+    assert.equal(t.agent("research").runtime.followUp, null);
+    t.advance(10);
+    await t.tick();
+    assert.equal(n, 2, "finished: waits for something new");
   });
 
   it("wakes a teammate early for a note, but not within the cooldown", async () => {
@@ -135,12 +171,21 @@ describe("agent runner", () => {
     await t.tick();
     const n = t.calls.length;
     await request(t.app).post("/api/team/notes").set(json).send({ to: ["research"], text: "Look at 240 W cables too." }).expect(200);
-    t.advance(5);
+    assert.equal(t.calls.length, 1);
+    // The Orchestrator ran first, then Research the next minute.
+    t.advance(1);
     await t.tick();
-    assert.equal(t.calls.length, n, "still cooling down");
-    t.advance(30);
+    const n2 = t.calls.length;
+    assert.equal(n2, n + 1);
+    await request(t.app).post("/api/team/notes").set(json).send({ to: ["research"], text: "And 100 W." }).expect(200);
+    t.advance(2);
     await t.tick();
-    assert.equal(t.calls.length, n + 1);
+    assert.equal(t.calls.length, n2, "still in the short pause after its run");
+    assert.match(t.agent("research").runtime.lastSkip ?? "", /new note for you\. Starts in a few minutes/);
+    assert.ok(Date.parse(t.agent("research").runtime.nextCheckAt!) - Date.parse(t.agent("research").runtime.lastRunAt!) <= 5 * MIN + 10, "the board shows the early start");
+    t.advance(4);
+    await t.tick();
+    assert.equal(t.calls.length, n2 + 1);
     assert.equal(t.calls.at(-1)!.agent, "Research");
     assert.ok(Date.parse(t.agent("orchestrator").runtime.nextCheckAt!) > Date.parse(t.agent("research").runtime.lastRunAt!), "the Orchestrator waits for its schedule");
   });
@@ -162,6 +207,9 @@ describe("agent runner", () => {
     assert.equal(s.plan.phase, "sourcing");
     assert.equal(s.requests.find((x) => x.id === r.id)!.status, "completed");
     t.advance(35);
+    await t.tick();
+    assert.equal(t.agent("sourcing").runtime.lastSkip, "Waiting for the Orchestrator to finish planning.");
+    t.advance(1);
     await t.tick();
     assert.ok(t.calls.some((c) => c.agent === "Sourcing"), `sourcing starts in its phase: ${JSON.stringify(t.agent("sourcing").runtime)} ${JSON.stringify(t.calls.map((c) => c.agent))}`);
     assert.ok(t.calls.filter((c) => c.agent === "Orchestrator").length === 2, "the owner's decision wakes the Orchestrator");

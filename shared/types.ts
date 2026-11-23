@@ -150,6 +150,8 @@ export interface AgentRuntime {
   lastCheckedAt: string | null;
   /** Why the last check didn't start a run, e.g. "Nothing new since the last run". */
   lastSkip: string | null;
+  /** Set when the agent said it isn't finished: it continues shortly, without waiting for its schedule. */
+  followUp: string | null;
   nextCheckAt: string | null;
 }
 

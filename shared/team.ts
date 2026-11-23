@@ -67,8 +67,12 @@ export const SCHEDULE_CHOICES: Array<{ minutes: number; label: string }> = [
 
 export const DEFAULT_MAX_RUNS_PER_DAY = 6;
 
-/** After a run, an agent waits this long before a teammate's note can wake it early. */
-export const WAKE_COOLDOWN_MINUTES = 30;
+/**
+ * After a run, an agent waits this long before a note (or its own "keep working")
+ * can start it again. A short pause stops two agents bouncing notes back and
+ * forth; the daily run limit caps the total.
+ */
+export const WAKE_COOLDOWN_MINUTES = 5;
 
 /** At most this many agents work at the same time. */
 export const MAX_CONCURRENT_RUNS = 2;
@@ -78,7 +82,7 @@ export function defaultSchedule(role: string): AgentSchedule {
 }
 
 export function idleRuntime(): AgentRuntime {
-  return { state: "idle", step: null, runId: null, since: null, lastRunAt: null, lastCheckedAt: null, lastSkip: null, nextCheckAt: null };
+  return { state: "idle", step: null, runId: null, since: null, lastRunAt: null, lastCheckedAt: null, lastSkip: null, followUp: null, nextCheckAt: null };
 }
 
 /**

@@ -30,6 +30,8 @@ export interface ToolContext {
   shopify: ShopifyTools | null;
   /** Per-run counters, to stop a run from flooding the notebook or the store. */
   counters: { notes: number; drafts: number };
+  /** Set by keep_working: the agent isn't finished and continues shortly. */
+  followUp: string | null;
 }
 
 type Input = Record<string, unknown>;
@@ -237,6 +239,23 @@ const cancelRequest: AgentTool = {
   },
 };
 
+const keepWorking: AgentTool = {
+  name: "keep_working",
+  description:
+    "Call this when your task isn't finished (for example you ran out of steps mid-research). You'll continue in a few minutes with a fresh briefing, instead of waiting for your next scheduled check. Say exactly what is left, because your summary and this are all you'll remember. Don't call it if you're only waiting on someone else.",
+  inputSchema: {
+    type: "object",
+    properties: { remaining: { type: "string", description: "What is left to do, specifically" } },
+    required: ["remaining"],
+    additionalProperties: false,
+  },
+  label: () => "Planning to continue shortly",
+  run(input, ctx) {
+    ctx.followUp = text(input, "remaining", 300);
+    return "Noted. You'll continue in a few minutes. Finish with your summary now, including what's left.";
+  },
+};
+
 /* ---------- Orchestrator ---------- */
 
 const setBrief: AgentTool = {
@@ -432,7 +451,7 @@ const salesSummary: AgentTool = {
 
 /* ---------- per-role tool sets ---------- */
 
-const COMMON = [writeNote, readNotebook, requestAction, completeRequest, cancelRequest];
+const COMMON = [writeNote, readNotebook, requestAction, completeRequest, cancelRequest, keepWorking];
 
 export function toolsFor(role: string, opts: { shopifyConnected: boolean; selfShipping: boolean }): AgentTool[] {
   const extra: AgentTool[] = [];

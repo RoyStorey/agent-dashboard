@@ -87,8 +87,12 @@ export class AgentRunner {
   tick(): void {
     const t = this.now();
     const s = this.store.get();
-    const skips: Array<{ id: string; why: string }> = [];
-    for (const agent of s.agents) {
+    const skips: Array<{ id: string; why: string; keepSchedule?: boolean }> = [];
+    /** Early starts that must wait out the short pause after a run: shown on the board instead of the daily schedule. */
+    const soon: Array<{ id: string; at: string; why: string }> = [];
+    // The Orchestrator first, so teammates can wait for its brief and notes.
+    const agents = [...s.agents].sort((a, b) => Number(b.role === "orchestrator") - Number(a.role === "orchestrator"));
+    for (const agent of agents) {
       if (this.active.has(agent.id) || agent.status !== "active" || !agent.schedule.enabled) continue;
       const due = !agent.runtime.nextCheckAt || t.getTime() >= Date.parse(agent.runtime.nextCheckAt);
       const why = this.blocked(s, agent, t) ?? phaseWait(s, agent);
@@ -101,8 +105,19 @@ export class AgentRunner {
         if (due) skips.push({ id: agent.id, why: "Nothing new since its last run." });
         continue;
       }
-      const cooled = !agent.runtime.lastRunAt || t.getTime() - Date.parse(agent.runtime.lastRunAt) >= WAKE_COOLDOWN_MINUTES * MINUTE;
-      if (!due && !(work.urgent && cooled)) continue;
+      const cooledAt = agent.runtime.lastRunAt ? Date.parse(agent.runtime.lastRunAt) + WAKE_COOLDOWN_MINUTES * MINUTE : 0;
+      if (!due && !work.urgent) continue;
+      if (!due && t.getTime() < cooledAt) {
+        const at = new Date(cooledAt).toISOString();
+        if (agent.runtime.nextCheckAt !== at) soon.push({ id: agent.id, at, why: `${work.reason}. Starts in a few minutes.` });
+        continue;
+      }
+      // Teammates wait while the Orchestrator is working, or until it has written its first brief, so they don't work blind.
+      const orch = agent.role !== "orchestrator" ? this.orchestratorBusy(s) : null;
+      if (orch) {
+        if (agent.runtime.lastSkip !== orch) skips.push({ id: agent.id, why: orch, keepSchedule: true });
+        continue;
+      }
       if (runsToday(s, agent.id, t) >= agent.schedule.maxRunsPerDay) {
         if (due) skips.push({ id: agent.id, why: `Reached today's limit of ${agent.schedule.maxRunsPerDay} runs. Waiting: ${work.reason}.` });
         continue;
@@ -110,17 +125,34 @@ export class AgentRunner {
       if (this.active.size >= this.maxConcurrent) continue; // try again next minute
       this.begin(agent.id, "schedule", work.reason);
     }
-    if (skips.length) {
+    if (skips.length || soon.length) {
       this.store.mutate((d) => {
         for (const k of skips) {
           const a = d.agents.find((x) => x.id === k.id);
           if (!a) continue;
           a.runtime.lastCheckedAt = t.toISOString();
           a.runtime.lastSkip = k.why;
-          a.runtime.nextCheckAt = new Date(t.getTime() + a.schedule.everyMinutes * MINUTE).toISOString();
+          if (!k.keepSchedule) a.runtime.nextCheckAt = new Date(t.getTime() + a.schedule.everyMinutes * MINUTE).toISOString();
+        }
+        for (const k of soon) {
+          const a = d.agents.find((x) => x.id === k.id);
+          if (!a) continue;
+          a.runtime.lastSkip = k.why;
+          a.runtime.nextCheckAt = k.at;
         }
       });
     }
+  }
+
+  /** A reason to wait for the Orchestrator, or null. Only waits for one that is active and able to run. */
+  private orchestratorBusy(s: DashboardState): string | null {
+    const t = this.now();
+    for (const o of s.agents) {
+      if (o.role !== "orchestrator" || o.status !== "active") continue;
+      if (this.active.has(o.id)) return "Waiting for the Orchestrator to finish planning.";
+      if (!o.runtime.lastRunAt && o.schedule.enabled && !this.blocked(s, o, t)) return "Waiting for the Orchestrator's first brief.";
+    }
+    return null;
   }
 
   /** The owner's "Run now". Skips the "anything new?" check and the daily limit, never the guardrails. */
@@ -180,6 +212,7 @@ export class AgentRunner {
         lastRunAt: t.toISOString(),
         lastCheckedAt: t.toISOString(),
         lastSkip: null,
+        followUp: null,
       };
       log(s, agent.name, "info", `Started working: ${reason}.`, t, { kind: "log", agentId });
       return { ...prompts, agent: structuredClone(agent), state: s };
@@ -215,6 +248,7 @@ export class AgentRunner {
       now: this.now,
       shopify: s.vault.shopify_admin?.value.trim() ? this.shopify : null,
       counters: { notes: 0, drafts: 0 },
+      followUp: null,
     };
     const tools = toolsFor(agent.role, { shopifyConnected: ctx.shopify !== null, selfShipping: s.business.fulfillmentMode === "self" });
     const halt = (why: string) => {
@@ -308,10 +342,10 @@ export class AgentRunner {
         error = describeModelError(err);
       }
     }
-    this.finish(runId, agent.id, status, summary, error);
+    this.finish(runId, agent.id, status, summary, error, status === "done" ? ctx.followUp : null);
   }
 
-  private finish(runId: string, agentId: string, status: AgentRun["status"], summary: string, error: string | null): void {
+  private finish(runId: string, agentId: string, status: AgentRun["status"], summary: string, error: string | null, followUp: string | null): void {
     const t = this.now();
     this.store.mutate((s) => {
       const run = s.runs.find((r) => r.id === runId);
@@ -329,7 +363,10 @@ export class AgentRunner {
         step: null,
         runId: null,
         since: null,
-        nextCheckAt: new Date(t.getTime() + agent.schedule.everyMinutes * MINUTE).toISOString(),
+        followUp,
+        // Continue shortly when the agent isn't finished; otherwise wait for the schedule (or something new).
+        nextCheckAt: new Date(t.getTime() + (followUp ? WAKE_COOLDOWN_MINUTES : agent.schedule.everyMinutes) * MINUTE).toISOString(),
+        lastSkip: followUp ? `Continuing in a few minutes: ${followUp}` : null,
       };
       const cost = run ? ` (${formatCents(run.costCents)})` : "";
       if (status === "done") {

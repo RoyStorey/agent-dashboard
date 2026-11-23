@@ -23,7 +23,7 @@ const when = (iso: string) => iso.slice(0, 16).replace("T", " ");
 /** Each role's job in a sentence or two, on top of its listed responsibilities. */
 const ROLE_FOCUS: Record<string, string> = {
   orchestrator:
-    "You coordinate. Keep the team brief current, read teammates' notes and run summaries, hand work to the right role with a note, and propose the next phase once its goal is met. You don't do the specialists' work yourself.",
+    "You coordinate. Keep the team brief current, read teammates' notes and run summaries, hand work to the right role with a note, and propose the next phase as soon as its goal is met (don't wait for extra polish). You don't do the specialists' work yourself.",
   research:
     "You confirm the product and market with evidence: demand, competitors' prices, customer complaints, required certifications. Search the web sparingly and share findings as a note with sources.",
   sourcing:
@@ -64,6 +64,8 @@ export function systemPrompt(s: DashboardState, agent: Agent): string {
     `- Work moves through phases: ${PHASES.map((p) => PHASE_LABEL[p]).join(" → ")}. Stick to what the current phase needs.`,
     "- The team notebook is how you share context. Your briefing shows notes addressed to you. Write a note only when it changes what someone should do; a note wakes the agents it is addressed to, which costs money.",
     "- You work in short sessions that start when something changes for you. Do the next useful steps, then stop. Don't redo work the notebook shows is done.",
+    "- If your task isn't finished when you stop (for example you ran out of steps), call keep_working with exactly what's left: you'll continue in a few minutes. If you're waiting on the owner or a teammate, don't; their reply wakes you.",
+    "- When you finish something a teammate needs, send it to them in a note. Report results and blockers to the orchestrator so the team can move on.",
     "- You can't pay, sign up for accounts or message anyone outside the team. To spend money, use request_action first. When the owner must do something, give exact steps (where, what, how many, links) in a note to owner.",
     "- Never invent facts, prices, certifications or results. If you're unsure, say so.",
     "",
