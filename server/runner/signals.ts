@@ -30,24 +30,35 @@ export function phaseWait(s: DashboardState, agent: Agent): string | null {
   return `Waits for the “${PHASE_LABEL[first]}” phase.`;
 }
 
+export interface WorkCheck {
+  /** Everything new for this agent, or null when nothing is. */
+  reason: string | null;
+  /** True when it's worth waking the agent before its next scheduled check (a note, a decision, a new phase). */
+  urgent: boolean;
+}
+
 /**
- * What's new for this agent since its last run, or null when nothing is.
- * "Since" is the start of its last run, so anything that happened during a
- * run is picked up next time.
+ * What's new for this agent since its last run. "Since" is the start of its
+ * last run, so anything that happened during a run is picked up next time.
  */
-export function workReason(s: DashboardState, agent: Agent, now: Date): string | null {
+export function checkWork(s: DashboardState, agent: Agent, now: Date): WorkCheck {
   const since = agent.runtime.lastRunAt ? Date.parse(agent.runtime.lastRunAt) : 0;
   const after = (iso: string | null | undefined) => Boolean(iso) && Date.parse(iso as string) > since;
   const elapsed = now.getTime() - since;
+  const urgent: string[] = [];
   const reasons: string[] = [];
   const role = agent.role;
 
-  if (!agent.runtime.lastRunAt) reasons.push("First run");
+  if (!agent.runtime.lastRunAt) urgent.push("first run");
   const notes = s.notebook.filter((n) => after(n.at) && n.authorId !== agent.id && (n.to.includes(role) || n.to.includes("all")));
-  if (notes.length) reasons.push(`${notes.length} new note${notes.length === 1 ? "" : "s"} for you`);
+  if (notes.length) urgent.push(`${notes.length} new note${notes.length === 1 ? "" : "s"} for you`);
   const decided = s.requests.filter((r) => r.agentId === agent.id && r.decidedBy === "owner" && after(r.decidedAt));
-  if (decided.length) reasons.push(`the owner decided ${decided.length} of your request${decided.length === 1 ? "" : "s"}`);
-  if (after(s.plan.updatedAt) && s.plan.updatedBy !== agent.name) reasons.push("the team plan changed");
+  if (decided.length) urgent.push(`the owner decided ${decided.length} of your request${decided.length === 1 ? "" : "s"}`);
+  if (agent.runtime.lastRunAt && after(s.plan.phaseSince)) urgent.push(`the team moved to “${PHASE_LABEL[s.plan.phase]}”`);
+  if (role === "storefront") {
+    const d = s.drafts.filter((x) => x.agentId === agent.id && after(x.decidedAt)).length;
+    if (d) urgent.push(`the owner reviewed ${d} draft${d === 1 ? "" : "s"}`);
+  }
 
   switch (role) {
     case "orchestrator": {
@@ -55,12 +66,7 @@ export function workReason(s: DashboardState, agent: Agent, now: Date): string |
       if (finished) reasons.push(`${finished} teammate run${finished === 1 ? "" : "s"} finished`);
       const tasks = s.tasks.filter((t) => after(t.completedAt)).length;
       if (tasks) reasons.push(`the owner completed ${tasks} checklist step${tasks === 1 ? "" : "s"}`);
-      if (since && elapsed > DAY && reasons.length === 0) reasons.push("daily check-in");
-      break;
-    }
-    case "storefront": {
-      const d = s.drafts.filter((x) => x.agentId === agent.id && after(x.decidedAt)).length;
-      if (d) reasons.push(`the owner reviewed ${d} draft${d === 1 ? "" : "s"}`);
+      if (since && elapsed > DAY && reasons.length + urgent.length === 0) reasons.push("daily check-in");
       break;
     }
     case "inventory": {
@@ -85,17 +91,20 @@ export function workReason(s: DashboardState, agent: Agent, now: Date): string |
       const shipped = s.shipments.filter((x) => after(x.shippedAt)).length;
       if (sales) reasons.push("new sales recorded");
       if (shipped) reasons.push(`${shipped} order${shipped === 1 ? "" : "s"} shipped`);
-      if (since && elapsed > 7 * DAY && reasons.length === 0) reasons.push("weekly review");
+      if (since && elapsed > 7 * DAY && reasons.length + urgent.length === 0) reasons.push("weekly review");
       break;
     }
     case "marketing": {
-      if (since && elapsed > 7 * DAY && reasons.length === 0) reasons.push("weekly review");
+      if (since && elapsed > 7 * DAY && reasons.length + urgent.length === 0) reasons.push("weekly review");
       break;
     }
     case "research": {
-      if (s.plan.phase === "operate" && since && elapsed > 14 * DAY && reasons.length === 0) reasons.push("fortnightly market check");
+      if (s.plan.phase === "operate" && since && elapsed > 14 * DAY && reasons.length + urgent.length === 0) reasons.push("fortnightly market check");
       break;
     }
   }
-  return reasons.length ? reasons.join("; ") : null;
+  const all = [...urgent, ...reasons];
+  if (!all.length) return { reason: null, urgent: false };
+  const text = all.join("; ");
+  return { reason: text.charAt(0).toUpperCase() + text.slice(1), urgent: urgent.length > 0 };
 }

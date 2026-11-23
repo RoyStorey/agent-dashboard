@@ -136,6 +136,8 @@ export interface AgentSchedule {
   enabled: boolean;
   /** How often to check for new work. A check that finds nothing new costs nothing. */
   everyMinutes: number;
+  /** Most model runs per day (a cost cap). "Run now" is not limited. */
+  maxRunsPerDay: number;
 }
 
 export interface AgentRuntime {
@@ -159,6 +161,8 @@ export interface TeamPlan {
   phase: Phase;
   /** The Orchestrator's current brief for the whole team. */
   brief: string;
+  /** When the team last moved to a new phase. */
+  phaseSince: string | null;
   updatedAt: string | null;
   updatedBy: string | null;
 }

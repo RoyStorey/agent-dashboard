@@ -21,6 +21,8 @@ import { agentConfig } from "./agentConfig.ts";
 import { maskWebhook, type DiscordNotifier } from "./discord.ts";
 import { autofillAgent, refreshSuggestedInputs } from "./inputs.ts";
 import { registerSetupRoutes } from "./setupRoutes.ts";
+import { applyApprovedPhase, registerTeamRoutes } from "./teamRoutes.ts";
+import { AgentRunner } from "./runner/runner.ts";
 import { ShopifyService } from "./shopify.ts";
 import { AddressSearch } from "./address.ts";
 import { LoginLimiter, Sessions, clearedCookie, hashPassword, readCookie, sessionCookie, SESSION_COOKIE, verifyPassword } from "./auth.ts";
@@ -61,6 +63,8 @@ export interface AppOptions {
   shopify?: ShopifyService;
   /** Address suggestions as you type. */
   addressSearch?: AddressSearch;
+  /** The built-in agent runner. index.ts starts it; tests pass one with a fake model. */
+  runner?: AgentRunner;
 }
 
 /** Parses a revenue report: either a net payout, or gross sales with optional refunds, fees and units. */
@@ -136,6 +140,8 @@ export function createApp(opts: AppOptions): express.Express {
   const allowedHosts = new Set(opts.allowedHosts ?? ["localhost", "127.0.0.1", "[::1]"]);
   const sessions = opts.sessions ?? new Sessions();
   const limiter = new LoginLimiter();
+  const shopify = opts.shopify ?? new ShopifyService(store, undefined, now);
+  const runner = opts.runner ?? new AgentRunner(store, { now, shopify });
 
   const app = express();
   app.disable("x-powered-by");
@@ -741,6 +747,8 @@ export function createApp(opts: AppOptions): express.Express {
         log(s, "Owner", status === "active" ? "success" : "warning", `${agent.name} is now ${status}.`, t);
       }
     });
+    const updated = store.get().agents.find((a) => a.id === req.params.id);
+    if (updated && updated.status !== "active") runner.stop(updated.id, `${updated.name} was ${updated.status === "paused" ? "paused" : "deactivated"}.`);
     sendState(res);
   });
 
@@ -752,6 +760,7 @@ export function createApp(opts: AppOptions): express.Express {
         throw new HttpError(409, `${agent.name} has ${open.length} open request(s). Approve/reject or close them first.`);
       }
       s.agents = s.agents.filter((a) => a.id !== agent.id);
+      runner.stop(agent.id, "The agent was removed.");
       log(s, "Owner", "warning", `Removed agent "${agent.name}". Its unspent budget returned to unallocated funds.`, now());
     });
     sendState(res);
@@ -822,6 +831,7 @@ export function createApp(opts: AppOptions): express.Express {
       }
       if ([per, daily, monthly, threshold, aiCap].some((v) => v !== undefined)) log(s, "Owner", "info", "Updated global guardrails.", t);
     });
+    if (store.get().guardrails.killSwitch) runner.stopAll("Kill switch is on.");
     sendState(res);
   });
 
@@ -883,6 +893,7 @@ export function createApp(opts: AppOptions): express.Express {
         amountCents: r.amountCents,
         title: `Owner approved: ${actionLabel(agent, r.action)}${r.amountCents > 0 ? ` (${formatCents(r.amountCents)})` : ""}`,
       });
+      applyApprovedPhase(s, r.id, t);
     });
     sendState(res);
   });
@@ -938,8 +949,9 @@ export function createApp(opts: AppOptions): express.Express {
     sendState,
     research: opts.research ?? anthropicResearch,
     notifier: opts.notifier,
-    shopify: opts.shopify ?? new ShopifyService(store, undefined, now),
+    shopify,
   });
+  registerTeamRoutes(owner, { store, now, sendState, runner, shopify });
 
   app.use("/api", owner);
 

@@ -65,8 +65,16 @@ export const SCHEDULE_CHOICES: Array<{ minutes: number; label: string }> = [
   { minutes: 10080, label: "weekly" },
 ];
 
+export const DEFAULT_MAX_RUNS_PER_DAY = 6;
+
+/** After a run, an agent waits this long before a teammate's note can wake it early. */
+export const WAKE_COOLDOWN_MINUTES = 30;
+
+/** At most this many agents work at the same time. */
+export const MAX_CONCURRENT_RUNS = 2;
+
 export function defaultSchedule(role: string): AgentSchedule {
-  return { enabled: true, everyMinutes: DEFAULT_SCHEDULE_MINUTES[role] ?? 1440 };
+  return { enabled: true, everyMinutes: DEFAULT_SCHEDULE_MINUTES[role] ?? 1440, maxRunsPerDay: DEFAULT_MAX_RUNS_PER_DAY };
 }
 
 export function idleRuntime(): AgentRuntime {

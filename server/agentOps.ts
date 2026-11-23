@@ -5,7 +5,8 @@
  */
 import { estimateCostCents, type UsageCounts } from "../shared/aiPricing.ts";
 import { formatCents } from "../shared/money.ts";
-import type { ActionRequest, Agent, DashboardState, Shipment } from "../shared/types.ts";
+import { PHASE_LABEL } from "../shared/team.ts";
+import type { ActionRequest, Agent, DashboardState, NoteEntry, Phase, Shipment } from "../shared/types.ts";
 import { autoAllocate } from "./allocate.ts";
 import { aiThisMonth } from "./finance.ts";
 import { evaluate, hardLimitViolations } from "./guardrails.ts";
@@ -197,4 +198,26 @@ export function writeReport(s: DashboardState, agentId: string, title: string, t
   const agent = agentById(s, agentId);
   touch(agent, t);
   return log(s, agent.name, "info", text, t, { kind: "report", agentId: agent.id, title, fields });
+}
+
+/** Moves the whole team to a phase. Agents for that phase wake on their next check. */
+export function setPhase(s: DashboardState, phase: Phase, actor: string, t: Date): void {
+  if (s.plan.phase === phase) return;
+  s.plan.phase = phase;
+  s.plan.phaseSince = t.toISOString();
+  s.plan.updatedAt = t.toISOString();
+  s.plan.updatedBy = actor;
+  log(s, actor, "success", `The team moved to the “${PHASE_LABEL[phase]}” phase.`, t, { kind: "system", title: `New phase: ${PHASE_LABEL[phase]}` });
+}
+
+export const NOTE_MAX_CHARS = 2000;
+
+/** Adds a note to the team notebook. Notes for the owner also appear in Activity (and Discord). */
+export function addNote(s: DashboardState, author: { name: string; id: string | null }, to: string[], text: string, t: Date): NoteEntry {
+  const note: NoteEntry = { id: newId(), at: t.toISOString(), author: author.name, authorId: author.id, to, text: text.slice(0, NOTE_MAX_CHARS) };
+  s.notebook.push(note);
+  if (author.id && to.includes("owner")) {
+    log(s, author.name, "warning", text.slice(0, 600), t, { kind: "report", agentId: author.id, title: `Note for you from ${author.name}` });
+  }
+  return note;
 }

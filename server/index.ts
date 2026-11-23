@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { createApp } from "./app.ts";
 import { DiscordNotifier } from "./discord.ts";
+import { AgentRunner } from "./runner/runner.ts";
 import { ShopifyService } from "./shopify.ts";
 import { Store } from "./store.ts";
 
@@ -20,7 +21,10 @@ const store = new Store(DATA_DIR);
 const notifier = new DiscordNotifier(store, undefined, process.env.DASHBOARD_URL ?? `http://localhost:${PORT}`);
 notifier.attach();
 const shopify = new ShopifyService(store);
-const app = createApp({ store, notifier, shopify, allowedHosts: ["localhost", "127.0.0.1", "[::1]", ...extraHosts] });
+// Checks every minute whether any active agent has something new to do; only then calls Claude.
+const runner = new AgentRunner(store, { shopify });
+runner.start();
+const app = createApp({ store, notifier, shopify, runner, allowedHosts: ["localhost", "127.0.0.1", "[::1]", ...extraHosts] });
 
 // Import new paid Shopify orders into Pack & ship every 5 minutes (when shipping yourself and connected).
 setInterval(() => void shopify.tick(), 5 * 60_000).unref();

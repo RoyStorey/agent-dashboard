@@ -65,7 +65,7 @@ export function defaultState(): DashboardState {
     shipments: [],
     supplies: [],
     shopify: { autoSync: true, shopName: null, connectedAt: null, lastSyncAt: null, lastSyncAdded: 0, lastError: null, lastErrorAt: null },
-    plan: { phase: "research", brief: "", updatedAt: null, updatedBy: null },
+    plan: { phase: "research", brief: "", phaseSince: null, updatedAt: null, updatedBy: null },
     notebook: [],
     runs: [],
     drafts: [],
@@ -174,7 +174,7 @@ export function migrate(raw: Partial<DashboardState> & Record<string, unknown>):
     // Every agent gets a schedule and an idle status (a restart ends any run in progress).
     const a = {
       ...a0,
-      schedule: a0.schedule ?? defaultSchedule(a0.role),
+      schedule: { ...defaultSchedule(a0.role), ...a0.schedule },
       runtime: { ...idleRuntime(), ...a0.runtime, state: "idle" as const, step: null, runId: null, since: null },
     };
     const tpl = findTemplate(a.role);
